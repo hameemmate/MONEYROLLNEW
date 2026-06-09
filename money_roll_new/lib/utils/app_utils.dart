@@ -1,7 +1,35 @@
+import 'package:get/get.dart';
 import 'package:intl/intl.dart';
 import 'app_constants.dart';
 
 class AppUtils {
+  /// Show a success message, closing any snackbar already on screen so they
+  /// never stack or linger after a form is submitted.
+  static void showSuccess(String title, String message) {
+    if (Get.isSnackbarOpen) Get.closeAllSnackbars();
+    Get.snackbar(
+      title,
+      message,
+      backgroundColor: AppColors.greenBg,
+      colorText: AppColors.green,
+      duration: const Duration(seconds: 2),
+      snackPosition: SnackPosition.BOTTOM,
+    );
+  }
+
+  /// Show an error message, closing any snackbar already on screen first.
+  static void showError(String title, String message) {
+    if (Get.isSnackbarOpen) Get.closeAllSnackbars();
+    Get.snackbar(
+      title,
+      message,
+      backgroundColor: AppColors.redBg,
+      colorText: AppColors.red,
+      duration: const Duration(seconds: 3),
+      snackPosition: SnackPosition.BOTTOM,
+    );
+  }
+
   static String formatAmount(double amount, {bool showSymbol = true}) {
     final formatter = NumberFormat('#,##0.00');
     final formatted = formatter.format(amount.abs());

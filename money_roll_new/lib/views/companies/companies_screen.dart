@@ -6,6 +6,7 @@ import '../../controllers/company_controller.dart';
 import '../../controllers/payment_controller.dart';
 import '../../models/company_model.dart';
 import '../../utils/app_constants.dart';
+import '../../utils/app_utils.dart';
 import '../widgets/common_widgets.dart';
 import '../payments/payments_screen.dart';
 
@@ -211,6 +212,7 @@ class CompaniesScreen extends StatelessWidget {
     final nameCtrl = TextEditingController(text: editing?.name ?? '');
     final phoneCtrl = TextEditingController(text: editing?.phone ?? '');
     final notesCtrl = TextEditingController(text: editing?.notes ?? '');
+    bool submitting = false;
 
     showModalBottomSheet(
       context: context,
@@ -219,137 +221,154 @@ class CompaniesScreen extends StatelessWidget {
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
-      builder: (ctx) => Padding(
-        padding: EdgeInsets.only(
-          left: 20,
-          right: 20,
-          top: 20,
-          bottom: MediaQuery.of(ctx).viewInsets.bottom + 24,
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Center(
-              child: Container(
-                width: 40,
-                height: 4,
-                decoration: BoxDecoration(
-                  color: AppColors.border,
-                  borderRadius: BorderRadius.circular(2),
-                ),
-              ),
-            ),
-            const SizedBox(height: 16),
-            Text(
-              editing == null
-                  ? 'Add Company / Partner'
-                  : 'Edit ${editing.name}',
-              style: GoogleFonts.spaceGrotesk(
-                fontSize: 17,
-                fontWeight: FontWeight.w600,
-                color: AppColors.textPrimary,
-              ),
-            ),
-            const SizedBox(height: 16),
-            TextField(
-              controller: nameCtrl,
-              style: const TextStyle(color: AppColors.textPrimary),
-              decoration: const InputDecoration(
-                labelText: 'Name *',
-                hintText: 'Enter company name',
-              ),
-              textCapitalization: TextCapitalization.words,
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: phoneCtrl,
-              keyboardType: TextInputType.phone,
-              style: const TextStyle(color: AppColors.textPrimary),
-              decoration: const InputDecoration(
-                labelText: 'Phone (optional)',
-                hintText: '+1234567890',
-              ),
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: notesCtrl,
-              style: const TextStyle(color: AppColors.textPrimary),
-              decoration: const InputDecoration(
-                labelText: 'Notes (optional)',
-                hintText: 'Additional information...',
-              ),
-              maxLines: 2,
-            ),
-            const SizedBox(height: 20),
-            Row(
-              children: [
-                if (editing != null)
-                  Expanded(
-                    child: GoldButton(
-                      label: 'Delete',
-                      isOutlined: true,
-                      onTap: () async {
-                        Navigator.pop(context);
-                        final confirm = await _confirmDelete(
-                          context,
-                          editing,
-                          compCtrl,
-                        );
-                        if (confirm == true) {
-                          await compCtrl.deleteCompany(editing.id);
-                        }
-                      },
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setModalState) => Padding(
+          padding: EdgeInsets.only(
+            left: 20,
+            right: 20,
+            top: 20,
+            bottom: MediaQuery.of(ctx).viewInsets.bottom + 24,
+          ),
+          child: SafeArea(
+            bottom: true,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Center(
+                    child: Container(
+                      width: 40,
+                      height: 4,
+                      decoration: BoxDecoration(
+                        color: AppColors.border,
+                        borderRadius: BorderRadius.circular(2),
+                      ),
                     ),
                   ),
-                if (editing != null) const SizedBox(width: 12),
-                Expanded(
-                  child: GoldButton(
-                    label: editing == null ? 'Add Company' : 'Save Changes',
-                    onTap: () async {
-                      if (nameCtrl.text.trim().isEmpty) {
-                        Get.snackbar(
-                          'Error',
-                          'Name is required',
-                          backgroundColor: AppColors.redBg,
-                          colorText: AppColors.red,
-                        );
-                        return;
-                      }
-
-                      if (editing == null) {
-                        await compCtrl.addCompany(
-                          name: nameCtrl.text.trim(),
-                          phone: phoneCtrl.text.trim().isEmpty
-                              ? null
-                              : phoneCtrl.text.trim(),
-                          notes: notesCtrl.text.trim().isEmpty
-                              ? null
-                              : notesCtrl.text.trim(),
-                        );
-                      } else {
-                        editing.name = nameCtrl.text.trim();
-                        editing.phone = phoneCtrl.text.trim().isEmpty
-                            ? null
-                            : phoneCtrl.text.trim();
-                        editing.notes = notesCtrl.text.trim().isEmpty
-                            ? null
-                            : notesCtrl.text.trim();
-                        await compCtrl.updateCompany(editing);
-                      }
-                      Navigator.pop(context);
-                      Get.snackbar(
-                        'Success',
-                        editing == null ? 'Company added' : 'Company updated',
-                        backgroundColor: AppColors.greenBg,
-                        colorText: AppColors.green,
-                      );
-                    },
+                  const SizedBox(height: 16),
+                  Text(
+                    editing == null
+                        ? 'Add Company / Partner'
+                        : 'Edit ${editing.name}',
+                    style: GoogleFonts.spaceGrotesk(
+                      fontSize: 17,
+                      fontWeight: FontWeight.w600,
+                      color: AppColors.textPrimary,
+                    ),
                   ),
-                ),
-              ],
+                  const SizedBox(height: 16),
+                  TextField(
+                    controller: nameCtrl,
+                    style: const TextStyle(color: AppColors.textPrimary),
+                    decoration: const InputDecoration(
+                      labelText: 'Name *',
+                      hintText: 'Enter company name',
+                    ),
+                    textCapitalization: TextCapitalization.words,
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: phoneCtrl,
+                    keyboardType: TextInputType.phone,
+                    style: const TextStyle(color: AppColors.textPrimary),
+                    decoration: const InputDecoration(
+                      labelText: 'Phone (optional)',
+                      hintText: '+1234567890',
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: notesCtrl,
+                    style: const TextStyle(color: AppColors.textPrimary),
+                    decoration: const InputDecoration(
+                      labelText: 'Notes (optional)',
+                      hintText: 'Additional information...',
+                    ),
+                    maxLines: 2,
+                  ),
+                  const SizedBox(height: 20),
+                  Row(
+                    children: [
+                      if (editing != null)
+                        Expanded(
+                          child: GoldButton(
+                            label: 'Delete',
+                            isOutlined: true,
+                            onTap: () async {
+                              if (submitting) return;
+                              Navigator.pop(ctx);
+                              final confirm = await _confirmDelete(
+                                context,
+                                editing,
+                                compCtrl,
+                              );
+                              if (confirm == true) {
+                                await compCtrl.deleteCompany(editing.id);
+                                AppUtils.showSuccess(
+                                  'Deleted',
+                                  'Company removed',
+                                );
+                              }
+                            },
+                          ),
+                        ),
+                      if (editing != null) const SizedBox(width: 12),
+                      Expanded(
+                        child: GoldButton(
+                          label: editing == null
+                              ? 'Add Company'
+                              : 'Save Changes',
+                          isLoading: submitting,
+                          onTap: () async {
+                            if (submitting) return;
+                            if (nameCtrl.text.trim().isEmpty) {
+                              AppUtils.showError('Error', 'Name is required');
+                              return;
+                            }
+
+                            setModalState(() => submitting = true);
+                            try {
+                              if (editing == null) {
+                                await compCtrl.addCompany(
+                                  name: nameCtrl.text.trim(),
+                                  phone: phoneCtrl.text.trim().isEmpty
+                                      ? null
+                                      : phoneCtrl.text.trim(),
+                                  notes: notesCtrl.text.trim().isEmpty
+                                      ? null
+                                      : notesCtrl.text.trim(),
+                                );
+                              } else {
+                                editing.name = nameCtrl.text.trim();
+                                editing.phone = phoneCtrl.text.trim().isEmpty
+                                    ? null
+                                    : phoneCtrl.text.trim();
+                                editing.notes = notesCtrl.text.trim().isEmpty
+                                    ? null
+                                    : notesCtrl.text.trim();
+                                await compCtrl.updateCompany(editing);
+                              }
+                              Navigator.pop(ctx);
+                              AppUtils.showSuccess(
+                                'Success',
+                                editing == null
+                                    ? 'Company added'
+                                    : 'Company updated',
+                              );
+                            } catch (e) {
+                              setModalState(() => submitting = false);
+                              AppUtils.showError('Error', e.toString());
+                            }
+                          },
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
             ),
-          ],
+          ),
         ),
       ),
     );

@@ -741,6 +741,7 @@ class DashboardScreen extends StatelessWidget {
     final descCtrl = TextEditingController();
     final compCtrl = Get.find<CompanyController>();
     String? fromCompanyId;
+    bool submitting = false;
 
     showModalBottomSheet(
       context: context,
@@ -851,49 +852,42 @@ class DashboardScreen extends StatelessWidget {
                   width: double.infinity,
                   child: GoldButton(
                     label: 'Add Cash',
+                    isLoading: submitting,
                     onTap: () async {
+                      if (submitting) return;
                       final amt = double.tryParse(amountCtrl.text.trim());
                       if (amt == null || amt <= 0) {
-                        Get.snackbar(
-                          'Error',
-                          'Enter valid amount',
-                          backgroundColor: AppColors.redBg,
-                          colorText: AppColors.red,
-                        );
+                        AppUtils.showError('Error', 'Enter valid amount');
                         return;
                       }
 
                       if (descCtrl.text.trim().isEmpty) {
-                        Get.snackbar(
-                          'Error',
-                          'Enter description',
-                          backgroundColor: AppColors.redBg,
-                          colorText: AppColors.red,
-                        );
+                        AppUtils.showError('Error', 'Enter description');
                         return;
                       }
 
-                      // Use createPayment instead of addCashInHand
-                      await payCtrl.createPayment(
-                        type: PaymentType.received,
-                        amount: amt,
-                        description: descCtrl.text.trim(),
-                        companyId: fromCompanyId,
-                        note: fromCompanyId == null
-                            ? 'Manual cash addition'
-                            : 'Cash received from ${compCtrl.getNameById(fromCompanyId)}',
-                        label: 'Cash added',
-                      );
-
-                      Get.back();
-
-                      Get.snackbar(
-                        'Cash Added',
-                        '${AppUtils.formatAmount(amt)} added to cash in hand',
-                        backgroundColor: AppColors.greenBg,
-                        colorText: AppColors.green,
-                        duration: const Duration(seconds: 2),
-                      );
+                      setState(() => submitting = true);
+                      try {
+                        // Use createPayment instead of addCashInHand
+                        await payCtrl.createPayment(
+                          type: PaymentType.received,
+                          amount: amt,
+                          description: descCtrl.text.trim(),
+                          companyId: fromCompanyId,
+                          note: fromCompanyId == null
+                              ? 'Manual cash addition'
+                              : 'Cash received from ${compCtrl.getNameById(fromCompanyId)}',
+                          label: 'Cash added',
+                        );
+                        Navigator.pop(ctx);
+                        AppUtils.showSuccess(
+                          'Cash Added',
+                          '${AppUtils.formatAmount(amt)} added to cash in hand',
+                        );
+                      } catch (e) {
+                        setState(() => submitting = false);
+                        AppUtils.showError('Error', e.toString());
+                      }
                     },
                   ),
                 ),

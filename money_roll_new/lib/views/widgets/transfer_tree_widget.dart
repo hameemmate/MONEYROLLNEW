@@ -283,6 +283,7 @@ class _PoolCard extends StatelessWidget {
     final labelCtrl = TextEditingController();
     String? fromCompanyId; // null = cash, otherwise company ID
     DateTime? deadline;
+    bool submitting = false;
 
     final nextCode = payCtrl.nextBranchCode(payment, null);
 
@@ -470,38 +471,38 @@ class _PoolCard extends StatelessWidget {
                     child: GoldButton(
                       label: 'Receive to Pool',
                       icon: Icons.arrow_downward,
+                      isLoading: submitting,
                       onTap: () async {
+                        if (submitting) return;
                         final amt = double.tryParse(amountCtrl.text.trim());
                         if (amt == null || amt <= 0) {
-                          Get.snackbar(
-                            'Error',
-                            'Enter valid amount',
-                            backgroundColor: AppColors.redBg,
-                            colorText: AppColors.red,
-                          );
+                          AppUtils.showError('Error', 'Enter valid amount');
                           return;
                         }
 
-                        await payCtrl.receiveIntoPool(
-                          paymentId: payment.id,
-                          fromCompanyId: fromCompanyId,
-                          amount: amt,
-                          note: noteCtrl.text.trim().isEmpty
-                              ? null
-                              : noteCtrl.text.trim(),
-                          label: labelCtrl.text.trim().isEmpty
-                              ? null
-                              : labelCtrl.text.trim(),
-                          deadline: deadline,
-                        );
-
-                        Get.back();
-                        Get.snackbar(
-                          'Received',
-                          '${AppUtils.formatAmount(amt)} received into pool',
-                          backgroundColor: AppColors.greenBg,
-                          colorText: AppColors.green,
-                        );
+                        setModalState(() => submitting = true);
+                        try {
+                          await payCtrl.receiveIntoPool(
+                            paymentId: payment.id,
+                            fromCompanyId: fromCompanyId,
+                            amount: amt,
+                            note: noteCtrl.text.trim().isEmpty
+                                ? null
+                                : noteCtrl.text.trim(),
+                            label: labelCtrl.text.trim().isEmpty
+                                ? null
+                                : labelCtrl.text.trim(),
+                            deadline: deadline,
+                          );
+                          Navigator.pop(ctx);
+                          AppUtils.showSuccess(
+                            'Received',
+                            '${AppUtils.formatAmount(amt)} received into pool',
+                          );
+                        } catch (e) {
+                          setModalState(() => submitting = false);
+                          AppUtils.showError('Error', e.toString());
+                        }
                       },
                     ),
                   ),
@@ -1361,6 +1362,7 @@ void showAddBranchSheet(
   String? selectedTo;
   TransferSourceType sourceType = TransferSourceType.fromTotal;
   DateTime? deadline;
+  bool submitting = false;
 
   // For slice selection
   String? selectedSliceTransferId;
@@ -1678,17 +1680,17 @@ void showAddBranchSheet(
                     width: double.infinity,
                     child: GoldButton(
                       label: 'Add Branch',
+                      isLoading: submitting,
                       onTap: () async {
+                        if (submitting) return;
                         double? amt;
                         String? specificParentId;
 
                         if (sliceMode) {
                           if (selectedSliceTransferId == null) {
-                            Get.snackbar(
+                            AppUtils.showError(
                               'Error',
                               'Select a slice to forward',
-                              backgroundColor: AppColors.redBg,
-                              colorText: AppColors.red,
                             );
                             return;
                           }
@@ -1699,16 +1701,15 @@ void showAddBranchSheet(
                         }
 
                         if (amt == null || amt <= 0 || selectedTo == null) {
-                          Get.snackbar(
+                          AppUtils.showError(
                             'Error',
                             'Enter an amount and pick a recipient',
-                            backgroundColor: AppColors.redBg,
-                            colorText: AppColors.red,
                           );
                           return;
                         }
 
                         final toId = selectedTo == '__me__' ? null : selectedTo;
+                        setModalState(() => submitting = true);
                         try {
                           await payCtrl.addTransfer(
                             paymentId: payment.id,
@@ -1728,14 +1729,11 @@ void showAddBranchSheet(
                                 : noteCtrl.text.trim(),
                             deadline: deadline,
                           );
-                          Get.back();
+                          Navigator.pop(ctx);
+                          AppUtils.showSuccess('Branch Added', 'Transfer saved');
                         } catch (e) {
-                          Get.snackbar(
-                            'Error',
-                            e.toString(),
-                            backgroundColor: AppColors.redBg,
-                            colorText: AppColors.red,
-                          );
+                          setModalState(() => submitting = false);
+                          AppUtils.showError('Error', e.toString());
                         }
                       },
                     ),
@@ -1844,6 +1842,7 @@ void showEditBranchSheet(BuildContext context, TransferModel t) {
   final labelCtrl = TextEditingController(text: t.label ?? '');
   final noteCtrl = TextEditingController(text: t.note ?? '');
   DateTime? deadline = t.deadline;
+  bool submitting = false;
 
   showModalBottomSheet(
     context: context,
@@ -1952,14 +1951,23 @@ void showEditBranchSheet(BuildContext context, TransferModel t) {
                   width: double.infinity,
                   child: GoldButton(
                     label: 'Save Changes',
+                    isLoading: submitting,
                     onTap: () async {
-                      await payCtrl.updateTransfer(
-                        t.id,
-                        label: labelCtrl.text.trim(),
-                        note: noteCtrl.text.trim(),
-                        deadline: deadline,
-                      );
-                      Get.back();
+                      if (submitting) return;
+                      setModalState(() => submitting = true);
+                      try {
+                        await payCtrl.updateTransfer(
+                          t.id,
+                          label: labelCtrl.text.trim(),
+                          note: noteCtrl.text.trim(),
+                          deadline: deadline,
+                        );
+                        Navigator.pop(ctx);
+                        AppUtils.showSuccess('Branch Updated', 'Changes saved');
+                      } catch (e) {
+                        setModalState(() => submitting = false);
+                        AppUtils.showError('Error', e.toString());
+                      }
                     },
                   ),
                 ),
@@ -2007,6 +2015,7 @@ void confirmDeleteBranch(BuildContext context, TransferModel t) {
           onPressed: () async {
             Navigator.of(ctx).pop();
             await payCtrl.deleteTransfer(t.id);
+            AppUtils.showSuccess('Deleted', 'Branch ${t.code} removed');
           },
           child: const Text('Delete', style: TextStyle(color: AppColors.red)),
         ),

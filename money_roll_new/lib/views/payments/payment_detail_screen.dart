@@ -319,9 +319,10 @@ class PaymentDetailScreen extends StatelessWidget {
           ),
           TextButton(
             onPressed: () async {
-              Get.back();
+              Get.back(); // close dialog
               await payCtrl.deletePayment(paymentId);
-              Get.back();
+              Get.back(); // leave detail screen
+              AppUtils.showSuccess('Deleted', 'Payment removed');
             },
             child: const Text('Delete', style: TextStyle(color: AppColors.red)),
           ),

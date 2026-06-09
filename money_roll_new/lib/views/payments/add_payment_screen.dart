@@ -489,32 +489,19 @@ class _AddPaymentScreenState extends State<AddPaymentScreen> {
   }
 
   Future<void> _submit() async {
+    if (_loading) return; // block duplicate submissions while in flight
+
     final amt = double.tryParse(_amountCtrl.text.trim());
     if (amt == null || amt <= 0) {
-      Get.snackbar(
-        'Error',
-        'Enter valid amount',
-        backgroundColor: AppColors.redBg,
-        colorText: AppColors.red,
-      );
+      AppUtils.showError('Error', 'Enter valid amount');
       return;
     }
     if (_descCtrl.text.trim().isEmpty) {
-      Get.snackbar(
-        'Error',
-        'Enter description',
-        backgroundColor: AppColors.redBg,
-        colorText: AppColors.red,
-      );
+      AppUtils.showError('Error', 'Enter description');
       return;
     }
     if (_type == PaymentType.sent && _selectedCompanyId == null) {
-      Get.snackbar(
-        'Error',
-        'Select a company to send to',
-        backgroundColor: AppColors.redBg,
-        colorText: AppColors.red,
-      );
+      AppUtils.showError('Error', 'Select a company to send to');
       return;
     }
 
@@ -532,12 +519,9 @@ class _AddPaymentScreenState extends State<AddPaymentScreen> {
           companyId: _selectedCompanyId,
         );
         Get.back();
-        Get.snackbar(
+        AppUtils.showSuccess(
           'Payment Updated',
           'Saved changes to ${widget.existing!.code}',
-          backgroundColor: AppColors.greenBg,
-          colorText: AppColors.green,
-          duration: const Duration(seconds: 2),
         );
         return;
       }
@@ -554,20 +538,12 @@ class _AddPaymentScreenState extends State<AddPaymentScreen> {
       );
 
       Get.back();
-      Get.snackbar(
+      AppUtils.showSuccess(
         'Payment Created',
         '${_type == PaymentType.sent ? 'Sent' : 'Received'} ${AppUtils.formatAmount(amt)}',
-        backgroundColor: AppColors.greenBg,
-        colorText: AppColors.green,
-        duration: const Duration(seconds: 2),
       );
     } catch (e) {
-      Get.snackbar(
-        'Error',
-        e.toString(),
-        backgroundColor: AppColors.redBg,
-        colorText: AppColors.red,
-      );
+      AppUtils.showError('Error', e.toString());
     } finally {
       setState(() => _loading = false);
     }

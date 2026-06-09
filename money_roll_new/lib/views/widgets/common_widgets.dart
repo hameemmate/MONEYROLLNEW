@@ -280,6 +280,10 @@ class GoldButton extends StatelessWidget {
   final bool isOutlined;
   final IconData? icon;
 
+  /// While true the button ignores taps and shows a spinner. Used to block
+  /// duplicate submissions while an async action is in flight.
+  final bool isLoading;
+
   const GoldButton({
     super.key,
     required this.label,
@@ -287,42 +291,50 @@ class GoldButton extends StatelessWidget {
     this.isSmall = false,
     this.isOutlined = false,
     this.icon,
+    this.isLoading = false,
   });
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        padding: EdgeInsets.symmetric(
-          horizontal: isSmall ? 16 : 24,
-          vertical: isSmall ? 10 : 14,
-        ),
-        decoration: BoxDecoration(
-          color: isOutlined ? Colors.transparent : AppColors.gold,
-          borderRadius: BorderRadius.circular(10),
-          border: isOutlined ? Border.all(color: AppColors.gold) : null,
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            if (icon != null) ...[
-              Icon(
-                icon,
-                size: 16,
-                color: isOutlined ? AppColors.gold : AppColors.onGold,
+    final Color fg = isOutlined ? AppColors.gold : AppColors.onGold;
+    return Opacity(
+      opacity: isLoading ? 0.6 : 1.0,
+      child: GestureDetector(
+        onTap: isLoading ? null : onTap,
+        child: Container(
+          padding: EdgeInsets.symmetric(
+            horizontal: isSmall ? 16 : 24,
+            vertical: isSmall ? 10 : 14,
+          ),
+          decoration: BoxDecoration(
+            color: isOutlined ? Colors.transparent : AppColors.gold,
+            borderRadius: BorderRadius.circular(10),
+            border: isOutlined ? Border.all(color: AppColors.gold) : null,
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (isLoading) ...[
+                SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(strokeWidth: 2, color: fg),
+                ),
+                const SizedBox(width: 8),
+              ] else if (icon != null) ...[
+                Icon(icon, size: 16, color: fg),
+                const SizedBox(width: 8),
+              ],
+              Text(
+                label,
+                style: GoogleFonts.spaceGrotesk(
+                  fontSize: isSmall ? 13 : 15,
+                  fontWeight: FontWeight.w600,
+                  color: fg,
+                ),
               ),
-              const SizedBox(width: 8),
             ],
-            Text(
-              label,
-              style: GoogleFonts.spaceGrotesk(
-                fontSize: isSmall ? 13 : 15,
-                fontWeight: FontWeight.w600,
-                color: isOutlined ? AppColors.gold : AppColors.onGold,
-              ),
-            ),
-          ],
+          ),
         ),
       ),
     );

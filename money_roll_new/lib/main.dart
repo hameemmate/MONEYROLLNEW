@@ -11,7 +11,7 @@ import 'models/enums.dart';
 import 'bindings/initial_binding.dart';
 import 'utils/app_constants.dart';
 import 'utils/app_theme.dart';
-import 'views/home_shell.dart';
+import 'views/splash_screen.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -63,7 +63,7 @@ class CashFlowApp extends StatelessWidget {
       theme: AppTheme.light,
       debugShowCheckedModeBanner: false,
       initialBinding: InitialBinding(),
-      home: const HomeShell(),
+      home: const SplashScreen(),
       defaultTransition: Transition.cupertino,
       transitionDuration: const Duration(milliseconds: 280),
     );

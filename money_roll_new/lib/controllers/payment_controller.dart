@@ -781,4 +781,17 @@ class PaymentController extends GetxController {
     await _cashBox.clear();
     loadAll();
   }
+
+  /// Restore payments, transfers and cash transactions from a backup,
+  /// preserving their original ids so the tree relationships stay intact.
+  Future<void> importData({
+    required List<PaymentModel> payments,
+    required List<TransferModel> transfers,
+    required List<CashTransactionModel> cashTransactions,
+  }) async {
+    await _paymentBox.putAll({for (final p in payments) p.id: p});
+    await _transferBox.putAll({for (final t in transfers) t.id: t});
+    await _cashBox.putAll({for (final tx in cashTransactions) tx.id: tx});
+    loadAll();
+  }
 }

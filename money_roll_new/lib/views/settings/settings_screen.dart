@@ -9,6 +9,11 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:share_plus/share_plus.dart';
 import '../../controllers/payment_controller.dart';
 import '../../controllers/company_controller.dart';
+import '../../models/company_model.dart';
+import '../../models/payment_model.dart';
+import '../../models/transfer_model.dart';
+import '../../models/cash_transaction_model.dart';
+import '../../models/enums.dart';
 import '../../utils/app_constants.dart';
 import '../../utils/app_utils.dart';
 import '../widgets/common_widgets.dart';
@@ -376,6 +381,8 @@ class SettingsScreen extends StatelessWidget {
               'amount': p.amount,
               'description': p.description,
               'date': p.date.toIso8601String(),
+              'createdAt': p.createdAt.toIso8601String(),
+              'rootTransferId': p.rootTransferId,
               'remainingAmount': p.remainingAmount,
               'totalDebt': p.totalDebt,
               'companyId': p.companyId,
@@ -463,10 +470,6 @@ class SettingsScreen extends StatelessWidget {
 
         await _clearExistingData(payCtrl, compCtrl);
         await _importDataFromMap(data, payCtrl, compCtrl);
-
-        // Reload all data
-        payCtrl.loadAll(); // You might need to make this public or call refresh
-        compCtrl.onInit();
 
         // Close loading dialog
         Get.back();
@@ -589,34 +592,114 @@ class SettingsScreen extends StatelessWidget {
     PaymentController payCtrl,
     CompanyController compCtrl,
   ) async {
-    // Import companies
-    if (data['companies'] != null) {
-      for (var companyData in data['companies']) {
-        // You'll need to recreate companies from JSON
-        // This depends on your CompanyModel structure
-      }
-    }
+    final companies = _asList(data['companies'])
+        .map(_companyFromJson)
+        .toList();
+    final payments = _asList(data['payments']).map(_paymentFromJson).toList();
+    final transfers = _asList(data['transfers']).map(_transferFromJson).toList();
+    final cashTransactions = _asList(data['cashTransactions'])
+        .map(_cashTxFromJson)
+        .toList();
 
-    // Import payments
-    if (data['payments'] != null) {
-      for (var paymentData in data['payments']) {
-        // Recreate payments from JSON
-      }
-    }
+    await compCtrl.importCompanies(companies);
+    await payCtrl.importData(
+      payments: payments,
+      transfers: transfers,
+      cashTransactions: cashTransactions,
+    );
+  }
 
-    // Import transfers
-    if (data['transfers'] != null) {
-      for (var transferData in data['transfers']) {
-        // Recreate transfers from JSON
-      }
-    }
+  // ==================== JSON Parsing Helpers ====================
 
-    // Import cash transactions
-    if (data['cashTransactions'] != null) {
-      for (var txData in data['cashTransactions']) {
-        // Recreate cash transactions from JSON
-      }
-    }
+  List<Map<String, dynamic>> _asList(dynamic value) {
+    if (value is! List) return const [];
+    return value.whereType<Map>().map((e) => e.cast<String, dynamic>()).toList();
+  }
+
+  double _toDouble(dynamic value) =>
+      value is num ? value.toDouble() : double.tryParse('$value') ?? 0.0;
+
+  DateTime? _toDate(dynamic value) {
+    if (value == null) return null;
+    return DateTime.tryParse('$value');
+  }
+
+  CompanyModel _companyFromJson(Map<String, dynamic> json) {
+    return CompanyModel(
+      id: json['id'] as String,
+      name: (json['name'] as String?) ?? '',
+      phone: json['phone'] as String?,
+      notes: json['notes'] as String?,
+      createdAt: _toDate(json['createdAt']) ?? DateTime.now(),
+      isArchived: (json['isArchived'] as bool?) ?? false,
+    );
+  }
+
+  PaymentModel _paymentFromJson(Map<String, dynamic> json) {
+    final date = _toDate(json['date']) ?? DateTime.now();
+    return PaymentModel(
+      id: json['id'] as String,
+      type: PaymentType.values.firstWhere(
+        (e) => e.name == json['type'],
+        orElse: () => PaymentType.received,
+      ),
+      amount: _toDouble(json['amount']),
+      companyId: json['companyId'] as String?,
+      rootTransferId: json['rootTransferId'] as String?,
+      description: (json['description'] as String?) ?? '',
+      date: date,
+      createdAt: _toDate(json['createdAt']) ?? date,
+      remainingAmount: _toDouble(json['remainingAmount']),
+      totalDebt: _toDouble(json['totalDebt']),
+      note: json['note'] as String?,
+      code: (json['code'] as String?) ?? '',
+      label: json['label'] as String?,
+      deadline: _toDate(json['deadline']),
+    );
+  }
+
+  TransferModel _transferFromJson(Map<String, dynamic> json) {
+    return TransferModel(
+      id: json['id'] as String,
+      paymentId: json['paymentId'] as String,
+      parentTransferId: json['parentTransferId'] as String?,
+      amount: _toDouble(json['amount']),
+      fromCompanyId: json['fromCompanyId'] as String?,
+      toCompanyId: json['toCompanyId'] as String?,
+      sourceType: TransferSourceType.values.firstWhere(
+        (e) => e.name == json['sourceType'],
+        orElse: () => TransferSourceType.fromTotal,
+      ),
+      specificParentTransferId: json['specificParentTransferId'] as String?,
+      note: json['note'] as String?,
+      // Older backups used 'date' for the transfer timestamp.
+      createdAt: _toDate(json['createdAt']) ?? _toDate(json['date']) ??
+          DateTime.now(),
+      isDebt: (json['isDebt'] as bool?) ?? false,
+      debtAmount: _toDouble(json['debtAmount']),
+      code: (json['code'] as String?) ?? '',
+      label: json['label'] as String?,
+      deadline: _toDate(json['deadline']),
+    );
+  }
+
+  CashTransactionModel _cashTxFromJson(Map<String, dynamic> json) {
+    final date = _toDate(json['date']) ?? DateTime.now();
+    return CashTransactionModel(
+      id: json['id'] as String,
+      txType: CashTxType.values.firstWhere(
+        // Newer backups use 'txType'; older clipboard exports used 'type'.
+        (e) => e.name == (json['txType'] ?? json['type']),
+        orElse: () => CashTxType.add,
+      ),
+      amount: _toDouble(json['amount']),
+      description: (json['description'] as String?) ?? '',
+      relatedPaymentId: json['relatedPaymentId'] as String?,
+      relatedTransferId: json['relatedTransferId'] as String?,
+      fromCompanyId: json['fromCompanyId'] as String?,
+      date: date,
+      createdAt: _toDate(json['createdAt']) ?? date,
+    );
   }
 
   // ==================== Copy to Clipboard ====================

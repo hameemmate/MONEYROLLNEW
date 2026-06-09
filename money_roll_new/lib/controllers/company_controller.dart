@@ -87,4 +87,10 @@ class CompanyController extends GetxController {
     await _box.clear();
     _loadCompanies();
   }
+
+  /// Restore companies from a backup, preserving their original ids.
+  Future<void> importCompanies(List<CompanyModel> items) async {
+    await _box.putAll({for (final c in items) c.id: c});
+    _loadCompanies();
+  }
 }
