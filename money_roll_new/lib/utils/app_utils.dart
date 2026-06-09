@@ -1,0 +1,70 @@
+import 'package:intl/intl.dart';
+import 'app_constants.dart';
+
+class AppUtils {
+  static String formatAmount(double amount, {bool showSymbol = true}) {
+    final formatter = NumberFormat('#,##0.00');
+    final formatted = formatter.format(amount.abs());
+    if (showSymbol) {
+      return '${AppConstants.currencySymbol} $formatted';
+    }
+    return formatted;
+  }
+
+  static String formatAmountCompact(double amount) {
+    if (amount >= 1000000) {
+      return '${AppConstants.currencySymbol} ${(amount / 1000000).toStringAsFixed(1)}M';
+    } else if (amount >= 1000) {
+      return '${AppConstants.currencySymbol} ${(amount / 1000).toStringAsFixed(1)}K';
+    }
+    return formatAmount(amount);
+  }
+
+  static String formatDate(DateTime date) {
+    return DateFormat('dd MMM yyyy').format(date);
+  }
+
+  static String formatDateShort(DateTime date) {
+    return DateFormat('dd MMM').format(date);
+  }
+
+  static String formatDateTime(DateTime date) {
+    return DateFormat('dd MMM yyyy, hh:mm a').format(date);
+  }
+
+  static String formatRelativeDate(DateTime date) {
+    final now = DateTime.now();
+    final diff = now.difference(date);
+    if (diff.inDays == 0) {
+      if (diff.inHours == 0) {
+        return '${diff.inMinutes}m ago';
+      }
+      return '${diff.inHours}h ago';
+    } else if (diff.inDays == 1) {
+      return 'Yesterday';
+    } else if (diff.inDays < 7) {
+      return '${diff.inDays}d ago';
+    }
+    return formatDateShort(date);
+  }
+
+  static String initials(String name) {
+    final parts = name.trim().split(' ');
+    if (parts.length >= 2) {
+      return '${parts[0][0]}${parts[1][0]}'.toUpperCase();
+    }
+    return name.substring(0, name.length >= 2 ? 2 : 1).toUpperCase();
+  }
+
+  static bool isToday(DateTime date) {
+    final now = DateTime.now();
+    return date.year == now.year &&
+        date.month == now.month &&
+        date.day == now.day;
+  }
+
+  static bool isThisMonth(DateTime date) {
+    final now = DateTime.now();
+    return date.year == now.year && date.month == now.month;
+  }
+}
