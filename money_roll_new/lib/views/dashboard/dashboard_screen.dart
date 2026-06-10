@@ -339,7 +339,8 @@ class DashboardScreen extends StatelessWidget {
                       children: [
                         const SectionHeader(title: 'Company Balances'),
                         const SizedBox(height: 12),
-                        if (payCtrl.companyBalances.isEmpty)
+                        if (payCtrl.companiesThatOweMe.isEmpty &&
+                            payCtrl.companiesIOwe.isEmpty)
                           Container(
                             padding: const EdgeInsets.all(20),
                             decoration: BoxDecoration(
@@ -358,7 +359,10 @@ class DashboardScreen extends StatelessWidget {
                             ),
                           )
                         else
-                          ...payCtrl.companyBalances.entries.map((entry) {
+                          ...[
+                            ...payCtrl.companiesThatOweMe,
+                            ...payCtrl.companiesIOwe,
+                          ].map((entry) {
                             final company = compCtrl.getById(entry.key);
                             final name = company?.name ?? 'Unknown';
                             final balance = entry.value;

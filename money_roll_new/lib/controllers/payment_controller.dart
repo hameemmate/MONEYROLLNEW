@@ -147,9 +147,17 @@ class PaymentController extends GetxController {
   }
 
   /// Amount still sitting in the payment pool, available to branch out.
+  /// Only outgoing pool branches (ME/company -> company) consume the pool.
+  /// Received-into-pool entries (toCompanyId == null) already raise
+  /// payment.amount, so counting them here would cancel the funds out.
   double availableFromPool(PaymentModel payment) {
     final used = _transferBox.values
-        .where((t) => t.paymentId == payment.id && t.parentTransferId == null)
+        .where(
+          (t) =>
+              t.paymentId == payment.id &&
+              t.parentTransferId == null &&
+              t.toCompanyId != null,
+        )
         .fold(0.0, (s, t) => s + t.amount);
     return payment.amount - used;
   }
@@ -335,8 +343,10 @@ class PaymentController extends GetxController {
         .toList();
 
     // Remaining = pool amount - everything branched directly out of the pool.
+    // Incoming receipts (toCompanyId == null) raise payment.amount instead of
+    // consuming the pool, so they must not be subtracted here.
     final fromPool = allTransfers
-        .where((t) => t.parentTransferId == null)
+        .where((t) => t.parentTransferId == null && t.toCompanyId != null)
         .fold(0.0, (sum, t) => sum + t.amount);
 
     final totalDebt = allTransfers
@@ -651,16 +661,54 @@ class PaymentController extends GetxController {
 
   // Add these methods to PaymentController class
 
-  /// Net position: positive = people owe me more, negative = I owe more
-  double get netPosition {
-    final totalOwedToMe = companyBalances.values
-        .where((v) => v > 0)
-        .fold(0.0, (s, v) => s + v);
-    final totalIOwe = companyBalances.values
-        .where((v) => v < 0)
-        .fold(0.0, (s, v) => s + v.abs());
-    return totalOwedToMe - totalIOwe;
+  /// Balance of every company inside each pool, kept separate per pool.
+  /// Returns company id -> list of that company's net balance in each pool it
+  /// appears in. Netting is done within a single pool only, so a surplus in one
+  /// pool can never cancel out a debt the same company holds in another pool.
+  Map<String, List<double>> _companyPoolBalances() {
+    final Map<String, Map<String, double>> byCompany = {};
+    for (final t in transfers) {
+      final from = t.fromCompanyId;
+      final to = t.toCompanyId;
+      if (from != null) {
+        final pools = byCompany.putIfAbsent(from, () => {});
+        pools[t.paymentId] = (pools[t.paymentId] ?? 0) - t.amount;
+      }
+      if (to != null) {
+        final pools = byCompany.putIfAbsent(to, () => {});
+        pools[t.paymentId] = (pools[t.paymentId] ?? 0) + t.amount;
+      }
+    }
+    return {for (final e in byCompany.entries) e.key: e.value.values.toList()};
   }
+
+  /// Per company, total they owe ME (sum of their positive pool balances).
+  Map<String, double> get companyOwedToMe {
+    final result = <String, double>{};
+    _companyPoolBalances().forEach((companyId, pools) {
+      final positive = pools
+          .where((v) => v > 0.0001)
+          .fold(0.0, (s, v) => s + v);
+      if (positive > 0.0001) result[companyId] = positive;
+    });
+    return result;
+  }
+
+  /// Per company, total I owe THEM (sum of their negative pool balances, as a
+  /// positive magnitude).
+  Map<String, double> get companyOwedByMe {
+    final result = <String, double>{};
+    _companyPoolBalances().forEach((companyId, pools) {
+      final negative = pools
+          .where((v) => v < -0.0001)
+          .fold(0.0, (s, v) => s + v.abs());
+      if (negative > 0.0001) result[companyId] = negative;
+    });
+    return result;
+  }
+
+  /// Net position: positive = people owe me more, negative = I owe more
+  double get netPosition => totalOutstanding - totalDebtOwedByMe;
 
   /// Get balance for a specific company (positive = they owe me, negative = I owe them)
   double getCompanyBalance(String companyId) {
@@ -693,26 +741,28 @@ class PaymentController extends GetxController {
   }
 
   // Add to PaymentController class
+  // Owed totals are aggregated per pool (see _companyPoolBalances) so a
+  // company can legitimately appear in both lists: owing me in one pool while I
+  // owe it in another. Values follow the old sign convention (owe-me positive,
+  // I-owe negative) so existing screens keep working.
   List<MapEntry<String, double>> get companiesThatOweMe {
-    return companyBalances.entries.where((e) => e.value > 0).toList()
+    return companyOwedToMe.entries.toList()
       ..sort((a, b) => b.value.compareTo(a.value));
   }
 
   List<MapEntry<String, double>> get companiesIOwe {
-    return companyBalances.entries.where((e) => e.value < 0).toList()
+    return companyOwedByMe.entries
+        .map((e) => MapEntry(e.key, -e.value))
+        .toList()
       ..sort((a, b) => a.value.compareTo(b.value));
   }
 
   double get totalOutstanding {
-    return companyBalances.values
-        .where((v) => v > 0)
-        .fold(0.0, (sum, v) => sum + v);
+    return companyOwedToMe.values.fold(0.0, (sum, v) => sum + v);
   }
 
   double get totalDebtOwedByMe {
-    return companyBalances.values
-        .where((v) => v < 0)
-        .fold(0.0, (sum, v) => sum + v.abs());
+    return companyOwedByMe.values.fold(0.0, (sum, v) => sum + v);
   }
   // Add this method to PaymentController class
 
