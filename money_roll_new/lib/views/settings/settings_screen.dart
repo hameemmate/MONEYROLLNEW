@@ -13,6 +13,7 @@ import '../../models/company_model.dart';
 import '../../models/payment_model.dart';
 import '../../models/transfer_model.dart';
 import '../../models/cash_transaction_model.dart';
+import '../../models/debt_clearance_model.dart';
 import '../../models/enums.dart';
 import '../../utils/app_constants.dart';
 import '../../utils/app_utils.dart';
@@ -61,8 +62,10 @@ class SettingsScreen extends StatelessWidget {
                       children: [
                         _summaryItem(
                           'Cash in Hand',
-                          AppUtils.formatAmount(payCtrl.cashInHand.value),
-                          AppColors.gold,
+                          AppUtils.formatAmountSigned(payCtrl.cashInHand.value),
+                          payCtrl.cashInHand.value < 0
+                              ? AppColors.red
+                              : AppColors.gold,
                         ),
                         _summaryItem(
                           'Payments',
@@ -427,6 +430,22 @@ class SettingsScreen extends StatelessWidget {
             },
           )
           .toList(),
+      'debtClearances': payCtrl.debtClearances
+          .map(
+            (c) => {
+              'id': c.id,
+              'transferId': c.transferId,
+              'paymentId': c.paymentId,
+              'companyId': c.companyId,
+              'amount': c.amount,
+              'source': c.source.name,
+              'cashTxId': c.cashTxId,
+              'note': c.note,
+              'date': c.date.toIso8601String(),
+              'createdAt': c.createdAt.toIso8601String(),
+            },
+          )
+          .toList(),
       'companyBalances': payCtrl.companyBalances,
       'cashInHand': payCtrl.cashInHand.value,
       'exportDate': DateTime.now().toIso8601String(),
@@ -600,12 +619,16 @@ class SettingsScreen extends StatelessWidget {
     final cashTransactions = _asList(data['cashTransactions'])
         .map(_cashTxFromJson)
         .toList();
+    final debtClearances = _asList(data['debtClearances'])
+        .map(_debtClearanceFromJson)
+        .toList();
 
     await compCtrl.importCompanies(companies);
     await payCtrl.importData(
       payments: payments,
       transfers: transfers,
       cashTransactions: cashTransactions,
+      debtClearances: debtClearances,
     );
   }
 
@@ -697,6 +720,25 @@ class SettingsScreen extends StatelessWidget {
       relatedPaymentId: json['relatedPaymentId'] as String?,
       relatedTransferId: json['relatedTransferId'] as String?,
       fromCompanyId: json['fromCompanyId'] as String?,
+      date: date,
+      createdAt: _toDate(json['createdAt']) ?? date,
+    );
+  }
+
+  DebtClearanceModel _debtClearanceFromJson(Map<String, dynamic> json) {
+    final date = _toDate(json['date']) ?? DateTime.now();
+    return DebtClearanceModel(
+      id: json['id'] as String,
+      transferId: (json['transferId'] as String?) ?? '',
+      paymentId: (json['paymentId'] as String?) ?? '',
+      companyId: (json['companyId'] as String?) ?? '',
+      amount: _toDouble(json['amount']),
+      source: DebtClearSource.values.firstWhere(
+        (e) => e.name == json['source'],
+        orElse: () => DebtClearSource.company,
+      ),
+      cashTxId: json['cashTxId'] as String?,
+      note: json['note'] as String?,
       date: date,
       createdAt: _toDate(json['createdAt']) ?? date,
     );

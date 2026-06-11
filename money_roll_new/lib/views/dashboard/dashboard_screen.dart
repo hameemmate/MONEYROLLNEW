@@ -11,6 +11,7 @@ import '../../utils/app_utils.dart';
 import '../widgets/common_widgets.dart';
 import '../payments/payment_detail_screen.dart';
 import '../payments/add_payment_screen.dart';
+import '../companies/company_balance_screen.dart';
 
 class DashboardScreen extends StatelessWidget {
   const DashboardScreen({super.key});
@@ -146,11 +147,15 @@ class DashboardScreen extends StatelessWidget {
                               ),
                               const SizedBox(height: 12),
                               Text(
-                                AppUtils.formatAmount(payCtrl.cashInHand.value),
+                                AppUtils.formatAmountSigned(
+                                  payCtrl.cashInHand.value,
+                                ),
                                 style: GoogleFonts.spaceGrotesk(
                                   fontSize: 34,
                                   fontWeight: FontWeight.w700,
-                                  color: AppColors.textPrimary,
+                                  color: payCtrl.cashInHand.value < 0
+                                      ? AppColors.red
+                                      : AppColors.textPrimary,
                                 ),
                               ),
                               const SizedBox(height: 8),
@@ -367,7 +372,11 @@ class DashboardScreen extends StatelessWidget {
                             final name = company?.name ?? 'Unknown';
                             final balance = entry.value;
                             final owesMe = balance > 0;
-                            return Container(
+                            return GestureDetector(
+                              onTap: () => Get.to(
+                                () => const CompanyBalanceScreen(),
+                              ),
+                              child: Container(
                               margin: const EdgeInsets.only(bottom: 8),
                               padding: const EdgeInsets.symmetric(
                                 horizontal: 14,
@@ -414,6 +423,7 @@ class DashboardScreen extends StatelessWidget {
                                   ),
                                 ],
                               ),
+                            ),
                             );
                           }),
                       ],
@@ -740,11 +750,55 @@ class DashboardScreen extends StatelessWidget {
     );
   }
 
+  Widget _cashModeTab({
+    required String label,
+    required IconData icon,
+    required bool active,
+    required Color activeColor,
+    required VoidCallback onTap,
+  }) {
+    return Expanded(
+      child: GestureDetector(
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.symmetric(vertical: 10),
+          decoration: BoxDecoration(
+            color: active ? AppColors.surface : Colors.transparent,
+            borderRadius: BorderRadius.circular(8),
+            border: active
+                ? Border.all(color: activeColor.withOpacity(0.5))
+                : null,
+          ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(
+                icon,
+                size: 14,
+                color: active ? activeColor : AppColors.textMuted,
+              ),
+              const SizedBox(width: 6),
+              Text(
+                label,
+                style: GoogleFonts.spaceGrotesk(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                  color: active ? activeColor : AppColors.textMuted,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   void _showAddCashSheet(BuildContext context, PaymentController payCtrl) {
     final amountCtrl = TextEditingController();
     final descCtrl = TextEditingController();
     final compCtrl = Get.find<CompanyController>();
     String? fromCompanyId;
+    bool isSend = false; // false = add to cash (received), true = send (sent)
     bool submitting = false;
 
     showModalBottomSheet(
@@ -780,34 +834,64 @@ class DashboardScreen extends StatelessWidget {
                 ),
                 const SizedBox(height: 16),
                 Text(
-                  'Add Cash to Hand',
+                  isSend ? 'Send Money to Company' : 'Add Cash to Hand',
                   style: GoogleFonts.spaceGrotesk(
                     fontSize: 17,
                     fontWeight: FontWeight.w600,
                     color: AppColors.textPrimary,
                   ),
                 ),
-                const SizedBox(height: 8),
+                const SizedBox(height: 12),
+                // Direction toggle: add cash in vs send cash out.
+                Container(
+                  padding: const EdgeInsets.all(4),
+                  decoration: BoxDecoration(
+                    color: AppColors.surfaceAlt,
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: AppColors.border),
+                  ),
+                  child: Row(
+                    children: [
+                      _cashModeTab(
+                        label: 'Add to cash',
+                        icon: Icons.arrow_downward,
+                        active: !isSend,
+                        activeColor: AppColors.green,
+                        onTap: () => setState(() => isSend = false),
+                      ),
+                      _cashModeTab(
+                        label: 'Send to company',
+                        icon: Icons.arrow_upward,
+                        active: isSend,
+                        activeColor: AppColors.red,
+                        onTap: () => setState(() => isSend = true),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 12),
                 Container(
                   padding: const EdgeInsets.all(10),
                   decoration: BoxDecoration(
-                    color: AppColors.greenBg,
+                    color: isSend ? AppColors.redBg : AppColors.greenBg,
                     borderRadius: BorderRadius.circular(8),
                   ),
                   child: Row(
                     children: [
-                      const Icon(
+                      Icon(
                         Icons.info_outline,
                         size: 14,
-                        color: AppColors.green,
+                        color: isSend ? AppColors.red : AppColors.green,
                       ),
                       const SizedBox(width: 8),
                       Expanded(
                         child: Text(
-                          'This will create a "Received" payment record',
-                          style: const TextStyle(
+                          isSend
+                              ? 'Cash leaves your hand (can go negative). The company will owe you this amount.'
+                              : 'This will create a "Received" payment record and add to cash in hand.',
+                          style: TextStyle(
                             fontSize: 12,
-                            color: AppColors.green,
+                            color: isSend ? AppColors.red : AppColors.green,
                           ),
                         ),
                       ),
@@ -837,14 +921,16 @@ class DashboardScreen extends StatelessWidget {
                   value: fromCompanyId,
                   dropdownColor: AppColors.surfaceAlt,
                   style: const TextStyle(color: AppColors.textPrimary),
-                  decoration: const InputDecoration(
-                    labelText: 'From (optional)',
+                  decoration: InputDecoration(
+                    labelText: isSend ? 'To company' : 'From (optional)',
+                    hintText: isSend ? 'Who are you sending to?' : null,
                   ),
                   items: [
-                    const DropdownMenuItem(
-                      value: null,
-                      child: Text('Free entry / Cash'),
-                    ),
+                    if (!isSend)
+                      const DropdownMenuItem(
+                        value: null,
+                        child: Text('Free entry / Cash'),
+                      ),
                     ...compCtrl.companies.map(
                       (c) => DropdownMenuItem(value: c.id, child: Text(c.name)),
                     ),
@@ -855,7 +941,7 @@ class DashboardScreen extends StatelessWidget {
                 SizedBox(
                   width: double.infinity,
                   child: GoldButton(
-                    label: 'Add Cash',
+                    label: isSend ? 'Send Money' : 'Add Cash',
                     isLoading: submitting,
                     onTap: () async {
                       if (submitting) return;
@@ -870,27 +956,43 @@ class DashboardScreen extends StatelessWidget {
                         return;
                       }
 
+                      if (isSend && fromCompanyId == null) {
+                        AppUtils.showError(
+                          'Error',
+                          'Select a company to send to',
+                        );
+                        return;
+                      }
+
                       setState(() => submitting = true);
                       try {
-                        // Use createPayment instead of addCashInHand
                         await payCtrl.createPayment(
-                          type: PaymentType.received,
+                          type: isSend
+                              ? PaymentType.sent
+                              : PaymentType.received,
                           amount: amt,
                           description: descCtrl.text.trim(),
                           companyId: fromCompanyId,
-                          note: fromCompanyId == null
+                          note: isSend
+                              ? 'Sent to ${compCtrl.getNameById(fromCompanyId)}'
+                              : fromCompanyId == null
                               ? 'Manual cash addition'
                               : 'Cash received from ${compCtrl.getNameById(fromCompanyId)}',
-                          label: 'Cash added',
+                          label: isSend ? 'Cash sent' : 'Cash added',
                         );
                         Navigator.pop(ctx);
                         AppUtils.showSuccess(
-                          'Cash Added',
-                          '${AppUtils.formatAmount(amt)} added to cash in hand',
+                          isSend ? 'Money Sent' : 'Cash Added',
+                          isSend
+                              ? '${AppUtils.formatAmount(amt)} sent to ${compCtrl.getNameById(fromCompanyId)}'
+                              : '${AppUtils.formatAmount(amt)} added to cash in hand',
                         );
                       } catch (e) {
                         setState(() => submitting = false);
-                        AppUtils.showError('Error', e.toString());
+                        AppUtils.showError(
+                          'Error',
+                          e.toString().replaceFirst('Exception: ', ''),
+                        );
                       }
                     },
                   ),

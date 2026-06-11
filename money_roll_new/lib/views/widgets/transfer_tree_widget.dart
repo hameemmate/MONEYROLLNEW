@@ -5,6 +5,7 @@ import '../../controllers/payment_controller.dart';
 import '../../controllers/company_controller.dart';
 import '../../models/payment_model.dart';
 import '../../models/transfer_model.dart';
+import '../../models/debt_clearance_model.dart';
 import '../../models/enums.dart';
 import '../../utils/app_constants.dart';
 import '../../utils/app_utils.dart';
@@ -276,12 +277,10 @@ class _PoolCard extends StatelessWidget {
   /// Bottom sheet to receive money into the payment pool
   void showReceiveIntoPoolSheet(BuildContext context, PaymentModel payment) {
     final payCtrl = Get.find<PaymentController>();
-    final compCtrl = Get.find<CompanyController>();
 
     final amountCtrl = TextEditingController();
     final noteCtrl = TextEditingController();
     final labelCtrl = TextEditingController();
-    String? fromCompanyId; // null = cash, otherwise company ID
     DateTime? deadline;
     bool submitting = false;
 
@@ -345,7 +344,7 @@ class _PoolCard extends StatelessWidget {
                         const SizedBox(width: 8),
                         Expanded(
                           child: Text(
-                            'Receive money from company or cash. This increases the pool amount available for branching.',
+                            'Moves cash in hand into this pool so it can be branched onward. Cash in hand: ${AppUtils.formatAmountSigned(payCtrl.cashInHand.value)}',
                             style: const TextStyle(
                               fontSize: 12,
                               color: AppColors.green,
@@ -362,40 +361,22 @@ class _PoolCard extends StatelessWidget {
                       decimal: true,
                     ),
                     style: const TextStyle(color: AppColors.textPrimary),
-                    decoration: const InputDecoration(
+                    decoration: InputDecoration(
                       labelText: 'Amount (AED)',
                       prefixText: 'د.إ ',
+                      helperText:
+                          'Max ${AppUtils.formatAmount(payCtrl.cashInHand.value, showSymbol: false)} (cash in hand)',
                     ),
-                  ),
-                  const SizedBox(height: 12),
-                  DropdownButtonFormField<String>(
-                    value: fromCompanyId,
-                    dropdownColor: AppColors.surfaceAlt,
-                    style: const TextStyle(color: AppColors.textPrimary),
-                    decoration: const InputDecoration(
-                      labelText: 'From',
-                      hintText: 'Who is sending this money?',
-                    ),
-                    items: [
-                      const DropdownMenuItem(
-                        value: null,
-                        child: Text('Cash / No company'),
-                      ),
-                      ...compCtrl.companies.map(
-                        (c) => DropdownMenuItem(
-                          value: c.id,
-                          child: Row(
-                            children: [
-                              CompanyAvatar(name: c.name, size: 22),
-                              const SizedBox(width: 8),
-                              Text(c.name),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ],
-                    onChanged: (val) =>
-                        setModalState(() => fromCompanyId = val),
+                    onChanged: (val) {
+                      final parsed = double.tryParse(val);
+                      final maxCash = payCtrl.cashInHand.value;
+                      if (parsed != null && maxCash > 0 && parsed > maxCash) {
+                        amountCtrl.text = maxCash.toStringAsFixed(2);
+                        amountCtrl.selection = TextSelection.fromPosition(
+                          TextPosition(offset: amountCtrl.text.length),
+                        );
+                      }
+                    },
                   ),
                   const SizedBox(height: 12),
                   TextField(
@@ -484,7 +465,6 @@ class _PoolCard extends StatelessWidget {
                         try {
                           await payCtrl.receiveIntoPool(
                             paymentId: payment.id,
-                            fromCompanyId: fromCompanyId,
                             amount: amt,
                             note: noteCtrl.text.trim().isEmpty
                                 ? null
@@ -496,12 +476,15 @@ class _PoolCard extends StatelessWidget {
                           );
                           Navigator.pop(ctx);
                           AppUtils.showSuccess(
-                            'Received',
-                            '${AppUtils.formatAmount(amt)} received into pool',
+                            'Pool Funded',
+                            '${AppUtils.formatAmount(amt)} moved into pool',
                           );
                         } catch (e) {
                           setModalState(() => submitting = false);
-                          AppUtils.showError('Error', e.toString());
+                          AppUtils.showError(
+                            'Error',
+                            e.toString().replaceFirst('Exception: ', ''),
+                          );
                         }
                       },
                     ),
@@ -883,11 +866,30 @@ class _TransferNodeState extends State<_TransferNode> {
                         AppColors.blueBg,
                       ),
                     if (t.isDebt) ...[
-                      _badge(
-                        'Debt +${AppUtils.formatAmount(t.debtAmount)}',
-                        AppColors.debtRed,
-                        AppColors.debtBg,
-                      ),
+                      if (payCtrl.isDebtFullyCleared(t))
+                        _badge(
+                          payCtrl.debtClearedDate(t.id) != null
+                              ? 'Cleared ${AppUtils.formatDateShort(payCtrl.debtClearedDate(t.id)!)}'
+                              : 'Cleared',
+                          AppColors.green,
+                          AppColors.greenBg,
+                        )
+                      else ...[
+                        GestureDetector(
+                          onTap: () => showClearDebtSheet(context, t),
+                          child: _badge(
+                            'Debt +${AppUtils.formatAmount(payCtrl.remainingDebtForTransfer(t))} · Clear',
+                            AppColors.debtRed,
+                            AppColors.debtBg,
+                          ),
+                        ),
+                        if (payCtrl.clearedForTransfer(t.id) > 0.0001)
+                          _badge(
+                            'Cleared ${AppUtils.formatAmount(payCtrl.clearedForTransfer(t.id))}',
+                            AppColors.green,
+                            AppColors.greenBg,
+                          ),
+                      ],
                     ],
                   ],
                 ),
@@ -1057,6 +1059,19 @@ class _TransferNodeState extends State<_TransferNode> {
                       showAddBranchSheet(context, widget.payment, transfer);
                     },
                   ),
+                  if (transfer.isDebt &&
+                      payCtrl.remainingDebtForTransfer(transfer) > 0.0001)
+                    _optionTile(
+                      icon: Icons.price_check,
+                      title: 'Clear Debt',
+                      subtitle:
+                          'Settle ${AppUtils.formatAmount(payCtrl.remainingDebtForTransfer(transfer))} owed',
+                      color: AppColors.debtRed,
+                      onTap: () {
+                        Navigator.pop(context);
+                        showClearDebtSheet(context, transfer);
+                      },
+                    ),
                   _optionTile(
                     icon: Icons.delete_outline,
                     title: 'Delete Branch',
@@ -1161,6 +1176,40 @@ class _TransferNodeState extends State<_TransferNode> {
                   Icons.warning,
                   AppColors.debtRed,
                 ),
+                if (payCtrl.clearedForTransfer(transfer.id) > 0.0001) ...[
+                  const SizedBox(height: 12),
+                  _detailRow(
+                    'Cleared',
+                    AppUtils.formatAmount(
+                      payCtrl.clearedForTransfer(transfer.id),
+                    ),
+                    Icons.check_circle_outline,
+                    AppColors.green,
+                  ),
+                ],
+                if (payCtrl.isDebtFullyCleared(transfer))
+                  ...[
+                    const SizedBox(height: 12),
+                    _detailRow(
+                      'Status',
+                      payCtrl.debtClearedDate(transfer.id) != null
+                          ? 'Cleared on ${AppUtils.formatDate(payCtrl.debtClearedDate(transfer.id)!)}'
+                          : 'Cleared',
+                      Icons.verified,
+                      AppColors.green,
+                    ),
+                  ]
+                else ...[
+                  const SizedBox(height: 12),
+                  _detailRow(
+                    'Remaining debt',
+                    AppUtils.formatAmount(
+                      payCtrl.remainingDebtForTransfer(transfer),
+                    ),
+                    Icons.pending_outlined,
+                    AppColors.debtRed,
+                  ),
+                ],
               ],
               if (transfer.sourceType == TransferSourceType.fromSpecific) ...[
                 const SizedBox(height: 12),
@@ -1192,6 +1241,21 @@ class _TransferNodeState extends State<_TransferNode> {
                 ),
               ],
               const SizedBox(height: 20),
+              if (transfer.isDebt &&
+                  payCtrl.remainingDebtForTransfer(transfer) > 0.0001) ...[
+                SizedBox(
+                  width: double.infinity,
+                  child: GoldButton(
+                    label: 'Clear Debt',
+                    icon: Icons.price_check,
+                    onTap: () {
+                      Navigator.pop(context);
+                      showClearDebtSheet(context, transfer);
+                    },
+                  ),
+                ),
+                const SizedBox(height: 12),
+              ],
               Row(
                 children: [
                   Expanded(
@@ -1976,6 +2040,299 @@ void showEditBranchSheet(BuildContext context, TransferModel t) {
           ),
         ),
       ),
+    ),
+  );
+}
+
+/// Settle the debt sitting on a branch. The amount is capped at the remaining
+/// debt and, for pool/cash sources, at the funds actually available. Clearing
+/// from the company is a waive (the creditor removes the shortfall, no money
+/// moves).
+void showClearDebtSheet(BuildContext context, TransferModel t) {
+  final payCtrl = Get.find<PaymentController>();
+  final compCtrl = Get.find<CompanyController>();
+
+  final payment = payCtrl.getPaymentById(t.paymentId);
+  if (payment == null) return;
+  if (!t.isDebt) return;
+
+  final creditorName = compCtrl.getNameById(t.fromCompanyId);
+  final remaining = payCtrl.remainingDebtForTransfer(t);
+  final poolAvailable = payCtrl.availableFromPool(payment);
+  final cashAvailable = payCtrl.cashInHand.value;
+
+  final amountCtrl = TextEditingController(text: remaining.toStringAsFixed(2));
+  final noteCtrl = TextEditingController();
+  // Default to a source that actually has funds; fall back to a company waive.
+  DebtClearSource source = cashAvailable > 0.0001
+      ? DebtClearSource.cash
+      : poolAvailable > 0.0001
+      ? DebtClearSource.pool
+      : DebtClearSource.company;
+  DateTime date = DateTime.now();
+  bool submitting = false;
+
+  showModalBottomSheet(
+    context: context,
+    isScrollControlled: true,
+    backgroundColor: AppColors.surface,
+    shape: const RoundedRectangleBorder(
+      borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+    ),
+    builder: (ctx) => StatefulBuilder(
+      builder: (ctx, setModalState) {
+        Widget sourceTile(
+          DebtClearSource value,
+          IconData icon,
+          String title,
+          String subtitle,
+          bool enabled,
+        ) {
+          final selected = source == value;
+          return Opacity(
+            opacity: enabled ? 1 : 0.45,
+            child: GestureDetector(
+              onTap: enabled
+                  ? () => setModalState(() => source = value)
+                  : null,
+              child: Container(
+                margin: const EdgeInsets.only(bottom: 10),
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: selected
+                      ? AppColors.gold.withOpacity(0.10)
+                      : AppColors.surfaceAlt,
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(
+                    color: selected ? AppColors.gold : AppColors.border,
+                    width: selected ? 1.5 : 1,
+                  ),
+                ),
+                child: Row(
+                  children: [
+                    Icon(
+                      icon,
+                      size: 20,
+                      color: selected ? AppColors.gold : AppColors.textSecondary,
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            title,
+                            style: const TextStyle(
+                              fontSize: 14,
+                              fontWeight: FontWeight.w600,
+                              color: AppColors.textPrimary,
+                            ),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            subtitle,
+                            style: const TextStyle(
+                              fontSize: 11,
+                              color: AppColors.textSecondary,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    if (selected)
+                      const Icon(
+                        Icons.check_circle,
+                        size: 18,
+                        color: AppColors.gold,
+                      ),
+                  ],
+                ),
+              ),
+            ),
+          );
+        }
+
+        return Padding(
+          padding: EdgeInsets.only(
+            left: 20,
+            right: 20,
+            top: 20,
+            bottom: MediaQuery.of(ctx).viewInsets.bottom + 24,
+          ),
+          child: SafeArea(
+            bottom: true,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Center(
+                    child: Container(
+                      width: 40,
+                      height: 4,
+                      decoration: BoxDecoration(
+                        color: AppColors.border,
+                        borderRadius: BorderRadius.circular(2),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  Text(
+                    'Clear debt ${t.code}',
+                    style: GoogleFonts.spaceGrotesk(
+                      fontSize: 17,
+                      fontWeight: FontWeight.w600,
+                      color: AppColors.textPrimary,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    'You owe $creditorName ${AppUtils.formatAmount(remaining)} on this branch.',
+                    style: const TextStyle(
+                      fontSize: 12,
+                      color: AppColors.textSecondary,
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  TextField(
+                    controller: amountCtrl,
+                    keyboardType: const TextInputType.numberWithOptions(
+                      decimal: true,
+                    ),
+                    style: const TextStyle(color: AppColors.textPrimary),
+                    decoration: InputDecoration(
+                      labelText: 'Amount to clear',
+                      prefixText: '${AppConstants.currencySymbol} ',
+                      helperText:
+                          'Max ${AppUtils.formatAmount(remaining, showSymbol: false)}',
+                    ),
+                    onChanged: (val) {
+                      final parsed = double.tryParse(val);
+                      if (parsed != null && parsed > remaining) {
+                        amountCtrl.text = remaining.toStringAsFixed(2);
+                        amountCtrl.selection = TextSelection.fromPosition(
+                          TextPosition(offset: amountCtrl.text.length),
+                        );
+                      }
+                    },
+                  ),
+                  const SizedBox(height: 16),
+                  Text(
+                    'Source of funds',
+                    style: AppTextStyles.labelSmall,
+                  ),
+                  const SizedBox(height: 8),
+                  sourceTile(
+                    DebtClearSource.pool,
+                    Icons.account_balance_wallet_outlined,
+                    'From pool ${payment.code}',
+                    'Available ${AppUtils.formatAmount(poolAvailable)}',
+                    poolAvailable > 0.0001,
+                  ),
+                  sourceTile(
+                    DebtClearSource.cash,
+                    Icons.payments_outlined,
+                    'From cash in hand',
+                    'Available ${AppUtils.formatAmount(cashAvailable)}',
+                    cashAvailable > 0.0001,
+                  ),
+                  sourceTile(
+                    DebtClearSource.company,
+                    Icons.handshake_outlined,
+                    'Waived by $creditorName',
+                    'Remove the shortfall, no money moves',
+                    true,
+                  ),
+                  const SizedBox(height: 4),
+                  GestureDetector(
+                    onTap: () async {
+                      final picked = await _pickThemedDate(ctx, date);
+                      if (picked != null) setModalState(() => date = picked);
+                    },
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 14,
+                        vertical: 14,
+                      ),
+                      decoration: BoxDecoration(
+                        color: AppColors.surfaceAlt,
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(color: AppColors.border),
+                      ),
+                      child: Row(
+                        children: [
+                          const Icon(
+                            Icons.event_outlined,
+                            size: 16,
+                            color: AppColors.gold,
+                          ),
+                          const SizedBox(width: 10),
+                          Text(
+                            'Cleared on ${AppUtils.formatDate(date)}',
+                            style: const TextStyle(
+                              fontSize: 14,
+                              color: AppColors.textPrimary,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: noteCtrl,
+                    style: const TextStyle(color: AppColors.textPrimary),
+                    decoration: const InputDecoration(
+                      labelText: 'Note (optional)',
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+                  SizedBox(
+                    width: double.infinity,
+                    child: GoldButton(
+                      label: 'Clear Debt',
+                      icon: Icons.price_check,
+                      isLoading: submitting,
+                      onTap: () async {
+                        if (submitting) return;
+                        final amount = double.tryParse(amountCtrl.text.trim());
+                        if (amount == null || amount <= 0) {
+                          AppUtils.showError(
+                            'Invalid amount',
+                            'Enter an amount greater than zero',
+                          );
+                          return;
+                        }
+                        setModalState(() => submitting = true);
+                        try {
+                          await payCtrl.clearDebt(
+                            transferId: t.id,
+                            source: source,
+                            amount: amount,
+                            date: date,
+                            note: noteCtrl.text.trim(),
+                          );
+                          Navigator.pop(ctx);
+                          AppUtils.showSuccess(
+                            'Debt Cleared',
+                            '${AppUtils.formatAmount(amount)} settled for $creditorName',
+                          );
+                        } catch (e) {
+                          setModalState(() => submitting = false);
+                          AppUtils.showError(
+                            'Error',
+                            e.toString().replaceFirst('Exception: ', ''),
+                          );
+                        }
+                      },
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
     ),
   );
 }

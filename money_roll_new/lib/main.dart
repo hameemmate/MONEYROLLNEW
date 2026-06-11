@@ -7,6 +7,7 @@ import 'models/company_model.dart';
 import 'models/payment_model.dart';
 import 'models/transfer_model.dart';
 import 'models/cash_transaction_model.dart';
+import 'models/debt_clearance_model.dart';
 import 'models/enums.dart';
 import 'bindings/initial_binding.dart';
 import 'utils/app_constants.dart';
@@ -42,12 +43,15 @@ void main() async {
   Hive.registerAdapter(PaymentTypeAdapter());
   Hive.registerAdapter(TransferSourceTypeAdapter());
   Hive.registerAdapter(CashTxTypeAdapter());
+  Hive.registerAdapter(DebtClearanceModelAdapter());
+  Hive.registerAdapter(DebtClearSourceAdapter());
 
   // Open all boxes
   await Hive.openBox<CompanyModel>(AppConstants.boxCompanies);
   await Hive.openBox<PaymentModel>(AppConstants.boxPayments);
   await Hive.openBox<TransferModel>(AppConstants.boxTransfers);
   await Hive.openBox<CashTransactionModel>(AppConstants.boxCashTx);
+  await Hive.openBox<DebtClearanceModel>(AppConstants.boxDebtClearances);
   await Hive.openBox(AppConstants.boxSettings);
 
   runApp(const CashFlowApp());

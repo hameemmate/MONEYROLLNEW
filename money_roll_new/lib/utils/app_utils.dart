@@ -39,6 +39,13 @@ class AppUtils {
     return formatted;
   }
 
+  /// Like [formatAmount] but keeps the minus sign for negative values.
+  /// Use where a value can legitimately be negative, e.g. cash in hand.
+  static String formatAmountSigned(double amount, {bool showSymbol = true}) {
+    final sign = amount < 0 ? '-' : '';
+    return '$sign${formatAmount(amount, showSymbol: showSymbol)}';
+  }
+
   static String formatAmountCompact(double amount) {
     if (amount >= 1000000) {
       return '${AppConstants.currencySymbol} ${(amount / 1000000).toStringAsFixed(1)}M';

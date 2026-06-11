@@ -65,11 +65,13 @@ class CashLedgerScreen extends StatelessWidget {
                           style: TextStyle(fontSize: 11, color: AppColors.gold),
                         ),
                         Text(
-                          AppUtils.formatAmount(payCtrl.cashInHand.value),
+                          AppUtils.formatAmountSigned(payCtrl.cashInHand.value),
                           style: GoogleFonts.spaceGrotesk(
                             fontSize: 22,
                             fontWeight: FontWeight.w700,
-                            color: AppColors.textPrimary,
+                            color: payCtrl.cashInHand.value < 0
+                                ? AppColors.red
+                                : AppColors.textPrimary,
                           ),
                         ),
                       ],

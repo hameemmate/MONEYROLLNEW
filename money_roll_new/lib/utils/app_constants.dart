@@ -143,5 +143,6 @@ class AppConstants {
   static const String boxTransfers = 'transfers';
   static const String boxCompanies = 'companies';
   static const String boxCashTx = 'cash_transactions';
+  static const String boxDebtClearances = 'debt_clearances';
   static const String boxSettings = 'settings';
 }

@@ -4,6 +4,7 @@ import 'package:uuid/uuid.dart';
 import '../models/payment_model.dart';
 import '../models/transfer_model.dart';
 import '../models/cash_transaction_model.dart';
+import '../models/debt_clearance_model.dart';
 import '../models/enums.dart';
 import '../utils/app_constants.dart';
 
@@ -11,6 +12,7 @@ class PaymentController extends GetxController {
   late Box<PaymentModel> _paymentBox;
   late Box<TransferModel> _transferBox;
   late Box<CashTransactionModel> _cashBox;
+  late Box<DebtClearanceModel> _debtBox;
 
   final _uuid = const Uuid();
 
@@ -18,6 +20,8 @@ class PaymentController extends GetxController {
   final RxList<TransferModel> transfers = <TransferModel>[].obs;
   final RxList<CashTransactionModel> cashTransactions =
       <CashTransactionModel>[].obs;
+  final RxList<DebtClearanceModel> debtClearances =
+      <DebtClearanceModel>[].obs;
 
   final RxDouble cashInHand = 0.0.obs;
   final RxBool isLoading = false.obs;
@@ -31,6 +35,7 @@ class PaymentController extends GetxController {
     _paymentBox = Hive.box<PaymentModel>(AppConstants.boxPayments);
     _transferBox = Hive.box<TransferModel>(AppConstants.boxTransfers);
     _cashBox = Hive.box<CashTransactionModel>(AppConstants.boxCashTx);
+    _debtBox = Hive.box<DebtClearanceModel>(AppConstants.boxDebtClearances);
     loadAll();
   }
 
@@ -39,6 +44,8 @@ class PaymentController extends GetxController {
       ..sort((a, b) => b.date.compareTo(a.date));
     transfers.value = _transferBox.values.toList();
     cashTransactions.value = _cashBox.values.toList()
+      ..sort((a, b) => b.date.compareTo(a.date));
+    debtClearances.value = _debtBox.values.toList()
       ..sort((a, b) => b.date.compareTo(a.date));
     _recalcCashInHand();
     _recalcCompanyBalances();
@@ -86,6 +93,12 @@ class PaymentController extends GetxController {
         balances[from] = (balances[from] ?? 0) - amt;
         balances[to] = (balances[to] ?? 0) + amt;
       }
+    }
+
+    // Clearing a debt settles what I owe the creditor company, so it lifts that
+    // company's balance back toward zero regardless of the funding source.
+    for (final c in debtClearances) {
+      balances[c.companyId] = (balances[c.companyId] ?? 0) + c.amount;
     }
 
     companyBalances.value = balances;
@@ -159,7 +172,14 @@ class PaymentController extends GetxController {
               t.toCompanyId != null,
         )
         .fold(0.0, (s, t) => s + t.amount);
-    return payment.amount - used;
+    // Debts cleared from this pool also draw down its un-branched balance.
+    final clearedFromPool = _debtBox.values
+        .where(
+          (c) =>
+              c.paymentId == payment.id && c.source == DebtClearSource.pool,
+        )
+        .fold(0.0, (s, c) => s + c.amount);
+    return payment.amount - used - clearedFromPool;
   }
 
   // ─── Payment ─────────────────────────────────────────────────────
@@ -349,11 +369,20 @@ class PaymentController extends GetxController {
         .where((t) => t.parentTransferId == null && t.toCompanyId != null)
         .fold(0.0, (sum, t) => sum + t.amount);
 
+    // Debt remaining in the chain after any settlements.
     final totalDebt = allTransfers
         .where((t) => t.isDebt)
-        .fold(0.0, (sum, t) => sum + t.debtAmount);
+        .fold(0.0, (sum, t) => sum + remainingDebtForTransfer(t));
 
-    payment.remainingAmount = payment.amount - fromPool;
+    // Debts settled from this pool also draw down its remaining balance, so the
+    // displayed remaining stays in step with availableFromPool.
+    final clearedFromPool = _debtBox.values
+        .where(
+          (c) => c.paymentId == paymentId && c.source == DebtClearSource.pool,
+        )
+        .fold(0.0, (s, c) => s + c.amount);
+
+    payment.remainingAmount = payment.amount - fromPool - clearedFromPool;
     payment.totalDebt = totalDebt;
     await _paymentBox.put(paymentId, payment);
   }
@@ -528,6 +557,22 @@ class PaymentController extends GetxController {
             },
           )
           .toList(),
+      'debtClearances': debtClearances
+          .map(
+            (c) => {
+              'id': c.id,
+              'transferId': c.transferId,
+              'paymentId': c.paymentId,
+              'companyId': c.companyId,
+              'amount': c.amount,
+              'source': c.source.name,
+              'cashTxId': c.cashTxId,
+              'note': c.note,
+              'date': c.date.toIso8601String(),
+              'createdAt': c.createdAt.toIso8601String(),
+            },
+          )
+          .toList(),
       'companyBalances': companyBalances,
     };
   }
@@ -548,6 +593,14 @@ class PaymentController extends GetxController {
         .toList();
     for (final id in cashToRemove) {
       await _cashBox.delete(id);
+    }
+    // Remove debt clearances tied to this payment
+    final debtToRemove = _debtBox.values
+        .where((c) => c.paymentId == paymentId)
+        .map((c) => c.id)
+        .toList();
+    for (final id in debtToRemove) {
+      await _debtBox.delete(id);
     }
     await _paymentBox.delete(paymentId);
     loadAll();
@@ -650,6 +703,14 @@ class PaymentController extends GetxController {
       for (final cid in cashIds) {
         await _cashBox.delete(cid);
       }
+      // Drop any debt clearances recorded against this branch.
+      final debtIds = _debtBox.values
+          .where((c) => c.transferId == id)
+          .map((c) => c.id)
+          .toList();
+      for (final did in debtIds) {
+        await _debtBox.delete(did);
+      }
       await _transferBox.delete(id);
     }
 
@@ -679,7 +740,156 @@ class PaymentController extends GetxController {
         pools[t.paymentId] = (pools[t.paymentId] ?? 0) + t.amount;
       }
     }
+    // A cleared debt reduces what I owe the creditor inside that same pool.
+    for (final c in debtClearances) {
+      final pools = byCompany.putIfAbsent(c.companyId, () => {});
+      pools[c.paymentId] = (pools[c.paymentId] ?? 0) + c.amount;
+    }
     return {for (final e in byCompany.entries) e.key: e.value.values.toList()};
+  }
+
+  // ─── Debt clearing ───────────────────────────────────────────────
+
+  /// All clearance entries recorded against a debt transfer.
+  List<DebtClearanceModel> clearancesForTransfer(String transferId) {
+    return debtClearances.where((c) => c.transferId == transferId).toList()
+      ..sort((a, b) => a.date.compareTo(b.date));
+  }
+
+  /// Total already cleared against a debt transfer.
+  double clearedForTransfer(String transferId) {
+    return _debtBox.values
+        .where((c) => c.transferId == transferId)
+        .fold(0.0, (s, c) => s + c.amount);
+  }
+
+  /// Outstanding debt still owed on a transfer (never negative).
+  double remainingDebtForTransfer(TransferModel t) {
+    if (!t.isDebt) return 0;
+    final remaining = t.debtAmount - clearedForTransfer(t.id);
+    return remaining > 0 ? remaining : 0;
+  }
+
+  /// True once a debt transfer has been settled in full.
+  bool isDebtFullyCleared(TransferModel t) {
+    return t.isDebt && remainingDebtForTransfer(t) <= 0.0001;
+  }
+
+  /// Date of the last clearance on a transfer, or null if untouched.
+  DateTime? debtClearedDate(String transferId) {
+    final list = clearancesForTransfer(transferId);
+    if (list.isEmpty) return null;
+    return list.last.date;
+  }
+
+  /// Debt-bearing transfers within a payment that still owe something.
+  List<TransferModel> outstandingDebtTransfers(String paymentId) {
+    return _transferBox.values
+        .where((t) => t.paymentId == paymentId && t.isDebt)
+        .where((t) => remainingDebtForTransfer(t) > 0.0001)
+        .toList()
+      ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
+  }
+
+  /// Settle part or all of a debt on [transferId].
+  /// The amount is capped at the remaining debt and, for pool/cash sources, at
+  /// the available funds. Pool and cash sources deduct real money; the company
+  /// source is a waive (no money moves).
+  Future<DebtClearanceModel> clearDebt({
+    required String transferId,
+    required DebtClearSource source,
+    required double amount,
+    DateTime? date,
+    String? note,
+  }) async {
+    final t = getTransferById(transferId);
+    if (t == null) throw Exception('Transfer not found');
+    if (!t.isDebt) throw Exception('This branch has no debt to clear');
+
+    final creditorId = t.fromCompanyId;
+    if (creditorId == null) {
+      throw Exception('This debt has no creditor company');
+    }
+
+    final payment = getPaymentById(t.paymentId);
+    if (payment == null) throw Exception('Payment not found');
+
+    if (amount <= 0) throw Exception('Enter an amount greater than zero');
+
+    final remaining = remainingDebtForTransfer(t);
+    if (amount > remaining + 0.0001) {
+      throw Exception(
+        'Amount exceeds remaining debt (${remaining.toStringAsFixed(2)})',
+      );
+    }
+
+    if (source == DebtClearSource.pool) {
+      final pool = availableFromPool(payment);
+      if (amount > pool + 0.0001) {
+        throw Exception(
+          'Pool ${payment.code} only has ${pool.toStringAsFixed(2)} available',
+        );
+      }
+    } else if (source == DebtClearSource.cash) {
+      if (amount > cashInHand.value + 0.0001) {
+        throw Exception(
+          'Cash in hand is only ${cashInHand.value.toStringAsFixed(2)}',
+        );
+      }
+    }
+
+    final when = date ?? DateTime.now();
+    String? cashTxId;
+
+    // Pool and cash settlements move money out of hand; a waive does not.
+    if (source == DebtClearSource.pool || source == DebtClearSource.cash) {
+      final label = source == DebtClearSource.pool
+          ? 'Debt cleared from pool ${payment.code} (${t.code})'
+          : 'Debt cleared from cash (${t.code})';
+      final cashTx = CashTransactionModel(
+        id: _uuid.v4(),
+        txType: CashTxType.deduct,
+        amount: amount,
+        description: label,
+        relatedPaymentId: t.paymentId,
+        relatedTransferId: transferId,
+        fromCompanyId: creditorId,
+        date: when,
+        createdAt: DateTime.now(),
+      );
+      await _cashBox.put(cashTx.id, cashTx);
+      cashTxId = cashTx.id;
+    }
+
+    final clearance = DebtClearanceModel(
+      id: _uuid.v4(),
+      transferId: transferId,
+      paymentId: t.paymentId,
+      companyId: creditorId,
+      amount: amount,
+      source: source,
+      cashTxId: cashTxId,
+      note: (note != null && note.trim().isNotEmpty) ? note.trim() : null,
+      date: when,
+      createdAt: DateTime.now(),
+    );
+    await _debtBox.put(clearance.id, clearance);
+
+    await _updatePaymentStats(t.paymentId);
+    loadAll();
+    return clearance;
+  }
+
+  /// Reverse a single debt clearance, restoring the debt and any cash deducted.
+  Future<void> deleteDebtClearance(String clearanceId) async {
+    final c = _debtBox.get(clearanceId);
+    if (c == null) return;
+    if (c.cashTxId != null) {
+      await _cashBox.delete(c.cashTxId);
+    }
+    await _debtBox.delete(clearanceId);
+    await _updatePaymentStats(c.paymentId);
+    loadAll();
   }
 
   /// Per company, total they owe ME (sum of their positive pool balances).
@@ -764,13 +974,13 @@ class PaymentController extends GetxController {
   double get totalDebtOwedByMe {
     return companyOwedByMe.values.fold(0.0, (sum, v) => sum + v);
   }
-  // Add this method to PaymentController class
-
-  /// Receive money into the payment pool from a company or cash
-  /// This increases the pool amount and updates company balances
+  /// Allocate cash in hand into a payment pool so it can be branched onward.
+  /// Funding only earmarks money you already hold — the actual cash leaves your
+  /// hand when you branch it out to a company, so it must not be deducted here
+  /// or the same money would be counted out twice. It is blocked when cash in
+  /// hand is less than the amount.
   Future<TransferModel> receiveIntoPool({
     required String paymentId,
-    required String? fromCompanyId, // null = cash, otherwise company ID
     required double amount,
     String? note,
     String? label,
@@ -778,14 +988,20 @@ class PaymentController extends GetxController {
   }) async {
     final payment = getPaymentById(paymentId);
     if (payment == null) throw Exception('Payment not found');
+    if (amount <= 0) throw Exception('Enter an amount greater than zero');
+    if (amount > cashInHand.value + 0.0001) {
+      throw Exception(
+        'Cash in hand is only ${cashInHand.value.toStringAsFixed(2)}',
+      );
+    }
 
-    // Create a transfer that brings money INTO the pool
+    // Earmark record: money set aside from cash in hand into this pool.
     final transfer = TransferModel(
       id: _uuid.v4(),
       paymentId: paymentId,
       parentTransferId: null, // Directly under payment pool
       amount: amount,
-      fromCompanyId: fromCompanyId, // Who is sending money
+      fromCompanyId: null, // ME / cash in hand
       toCompanyId: null, // null = ME (the pool)
       sourceType: TransferSourceType.fromTotal,
       specificParentTransferId: null,
@@ -800,25 +1016,11 @@ class PaymentController extends GetxController {
 
     await _transferBox.put(transfer.id, transfer);
 
-    // Update payment stats (increase available amount)
+    // Grow the pool's available balance. Cash in hand is intentionally left
+    // unchanged; it is deducted when this money is branched out to a company.
     payment.amount += amount;
     payment.remainingAmount += amount;
     await _paymentBox.put(payment.id, payment);
-
-    // Cash transaction for money coming into pool
-    final cashTx = CashTransactionModel(
-      id: _uuid.v4(),
-      txType: CashTxType.add,
-      amount: amount,
-      description:
-          'Received into pool ${payment.code} from ${fromCompanyId ?? "Cash"}',
-      relatedPaymentId: paymentId,
-      relatedTransferId: transfer.id,
-      fromCompanyId: fromCompanyId,
-      date: DateTime.now(),
-      createdAt: DateTime.now(),
-    );
-    await _cashBox.put(cashTx.id, cashTx);
 
     loadAll();
     return transfer;
@@ -829,6 +1031,7 @@ class PaymentController extends GetxController {
     await _paymentBox.clear();
     await _transferBox.clear();
     await _cashBox.clear();
+    await _debtBox.clear();
     loadAll();
   }
 
@@ -838,10 +1041,12 @@ class PaymentController extends GetxController {
     required List<PaymentModel> payments,
     required List<TransferModel> transfers,
     required List<CashTransactionModel> cashTransactions,
+    List<DebtClearanceModel> debtClearances = const [],
   }) async {
     await _paymentBox.putAll({for (final p in payments) p.id: p});
     await _transferBox.putAll({for (final t in transfers) t.id: t});
     await _cashBox.putAll({for (final tx in cashTransactions) tx.id: tx});
+    await _debtBox.putAll({for (final c in debtClearances) c.id: c});
     loadAll();
   }
 }
