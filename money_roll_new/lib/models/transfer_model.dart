@@ -46,6 +46,11 @@ class TransferModel extends HiveObject {
   /// Optional deadline / due date for this branch.
   DateTime? deadline;
 
+  /// When this record funds the pool from ANOTHER pool, this holds the source
+  /// payment's id. Such records always have parentTransferId == null and
+  /// toCompanyId == null (money lands in this payment's pool).
+  String? sourcePaymentId;
+
   TransferModel({
     required this.id,
     required this.paymentId,
@@ -62,6 +67,7 @@ class TransferModel extends HiveObject {
     this.code = '',
     this.label,
     this.deadline,
+    this.sourcePaymentId,
   });
 
   /// Code plus label when present, e.g. "M1B1 · Salary share".
@@ -92,6 +98,8 @@ class TransferModelAdapter extends TypeAdapter<TransferModel> {
     final code = reader.availableBytes > 0 ? reader.readString() : '';
     final label = reader.availableBytes > 0 ? reader.read() as String? : null;
     final deadlineMs = reader.availableBytes > 0 ? reader.read() as int? : null;
+    final sourcePaymentId =
+        reader.availableBytes > 0 ? reader.read() as String? : null;
     return TransferModel(
       id: id,
       paymentId: paymentId,
@@ -110,6 +118,7 @@ class TransferModelAdapter extends TypeAdapter<TransferModel> {
       deadline: deadlineMs == null
           ? null
           : DateTime.fromMillisecondsSinceEpoch(deadlineMs),
+      sourcePaymentId: sourcePaymentId,
     );
   }
 
@@ -130,5 +139,6 @@ class TransferModelAdapter extends TypeAdapter<TransferModel> {
     writer.writeString(obj.code);
     writer.write(obj.label);
     writer.write(obj.deadline?.millisecondsSinceEpoch);
+    writer.write(obj.sourcePaymentId);
   }
 }

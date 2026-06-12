@@ -8,6 +8,7 @@ import '../../utils/app_constants.dart';
 import '../../utils/app_utils.dart';
 import '../widgets/common_widgets.dart';
 import '../widgets/transfer_tree_widget.dart';
+import 'add_payment_screen.dart';
 
 class PaymentDetailScreen extends StatelessWidget {
   final String paymentId;
@@ -60,6 +61,15 @@ class PaymentDetailScreen extends StatelessWidget {
             onPressed: () => Get.back(),
           ),
           actions: [
+            IconButton(
+              icon: const Icon(
+                Icons.edit_outlined,
+                color: AppColors.gold,
+                size: 20,
+              ),
+              onPressed: () =>
+                  Get.to(() => AddPaymentScreen(existing: payment)),
+            ),
             IconButton(
               icon: const Icon(
                 Icons.delete_outline,

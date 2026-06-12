@@ -407,6 +407,7 @@ class SettingsScreen extends StatelessWidget {
               'toCompanyId': t.toCompanyId,
               'sourceType': t.sourceType.name,
               'specificParentTransferId': t.specificParentTransferId,
+              'sourcePaymentId': t.sourcePaymentId,
               'isDebt': t.isDebt,
               'debtAmount': t.debtAmount,
               'note': t.note,
@@ -703,6 +704,7 @@ class SettingsScreen extends StatelessWidget {
       code: (json['code'] as String?) ?? '',
       label: json['label'] as String?,
       deadline: _toDate(json['deadline']),
+      sourcePaymentId: json['sourcePaymentId'] as String?,
     );
   }
 

@@ -414,7 +414,8 @@ class _PaymentListItem extends StatelessWidget {
             ),
 
             // Progress bar for forwarded amount
-            if (isSent && payment.amount > 0) ...[
+            if (payment.amount > 0 &&
+                payment.remainingAmount < payment.amount) ...[
               const SizedBox(height: 10),
               Row(
                 children: [

@@ -9,6 +9,7 @@ import '../../models/debt_clearance_model.dart';
 import '../../models/enums.dart';
 import '../../utils/app_constants.dart';
 import '../../utils/app_utils.dart';
+import '../payments/payment_detail_screen.dart';
 import 'common_widgets.dart';
 
 /// Renders a payment as a branchable pool (M1) with its full transfer tree.
@@ -52,11 +53,16 @@ class _TransferTreeWidgetState extends State<TransferTreeWidget> {
             .toList()
           ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
 
+    // Money this pool sent into other pools; the records live on the
+    // receiving pool but belong in this tree too.
+    final outgoingMoves = payCtrl.poolFundingsOutOf(widget.paymentId);
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         _PoolCard(payment: payment, allowAdd: widget.allowAddTransfer),
         const SizedBox(height: 4),
+        ...outgoingMoves.map((t) => _OutgoingPoolMoveCard(transfer: t)),
         ...firstLevel.map(
           (t) => _TransferNode(
             transfer: t,
@@ -66,6 +72,121 @@ class _TransferTreeWidgetState extends State<TransferTreeWidget> {
           ),
         ),
       ],
+    );
+  }
+}
+
+/// Card shown in the SOURCE pool's tree for money moved into another pool.
+/// The record itself is stored on the receiving pool, so edits and deletes
+/// operate on that record (deleting returns the money to this pool).
+class _OutgoingPoolMoveCard extends StatelessWidget {
+  final TransferModel transfer;
+
+  const _OutgoingPoolMoveCard({required this.transfer});
+
+  @override
+  Widget build(BuildContext context) {
+    final payCtrl = Get.find<PaymentController>();
+    final target = payCtrl.getPaymentById(transfer.paymentId);
+    final targetCode = target?.code ?? '?';
+
+    return Container(
+      margin: const EdgeInsets.symmetric(vertical: 3),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: AppColors.blue.withOpacity(0.4)),
+      ),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+            decoration: BoxDecoration(
+              color: AppColors.blueBg,
+              borderRadius: BorderRadius.circular(4),
+            ),
+            child: Text(
+              '→ $targetCode',
+              style: GoogleFonts.spaceGrotesk(
+                fontSize: 11,
+                fontWeight: FontWeight.w700,
+                color: AppColors.blue,
+                letterSpacing: 0.4,
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              'Moved to pool $targetCode'
+              '${transfer.label != null && transfer.label!.trim().isNotEmpty ? ' · ${transfer.label!.trim()}' : ''}',
+              overflow: TextOverflow.ellipsis,
+              style: GoogleFonts.spaceGrotesk(
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+                color: AppColors.textPrimary,
+              ),
+            ),
+          ),
+          Text(
+            AppUtils.formatAmount(transfer.amount),
+            style: GoogleFonts.spaceGrotesk(
+              fontSize: 13,
+              fontWeight: FontWeight.w700,
+              color: AppColors.blue,
+            ),
+          ),
+          PopupMenuButton<String>(
+            padding: EdgeInsets.zero,
+            iconSize: 16,
+            icon: const Icon(Icons.more_vert, color: AppColors.textMuted),
+            color: AppColors.surface,
+            onSelected: (v) {
+              if (v == 'open' && target != null) {
+                Get.to(() => PaymentDetailScreen(paymentId: target.id));
+              } else if (v == 'edit') {
+                showEditBranchSheet(context, transfer);
+              } else if (v == 'delete') {
+                confirmDeleteBranch(context, transfer);
+              }
+            },
+            itemBuilder: (_) => [
+              if (target != null)
+                PopupMenuItem(
+                  value: 'open',
+                  child: Row(
+                    children: const [
+                      Icon(Icons.open_in_new, size: 16),
+                      SizedBox(width: 8),
+                      Text('Open Pool'),
+                    ],
+                  ),
+                ),
+              const PopupMenuItem(
+                value: 'edit',
+                child: Row(
+                  children: [
+                    Icon(Icons.edit_outlined, size: 16),
+                    SizedBox(width: 8),
+                    Text('Edit Amount'),
+                  ],
+                ),
+              ),
+              const PopupMenuItem(
+                value: 'delete',
+                child: Row(
+                  children: [
+                    Icon(Icons.delete_outline, size: 16),
+                    SizedBox(width: 8),
+                    Text('Delete (return money)'),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
     );
   }
 }
@@ -85,12 +206,25 @@ class _PoolCard extends StatelessWidget {
         ? compCtrl.getNameById(payment.companyId)
         : 'Cash / free entry';
 
+    // Pools received from a company are debt pools — money I owe until
+    // settled — and get a distinct accent so they stand out.
+    final bool debtPool =
+        payment.type == PaymentType.received && payment.companyId != null;
+    final Color accent = debtPool ? AppColors.debtRed : AppColors.gold;
+
+    // Outstanding debt on the original receipt (excludes branch debts).
+    double receiptDebt = 0;
+    if (debtPool && payment.rootTransferId != null) {
+      final root = payCtrl.getTransferById(payment.rootTransferId!);
+      if (root != null) receiptDebt = payCtrl.remainingDebtForTransfer(root);
+    }
+
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
         color: AppColors.surface,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: AppColors.gold.withOpacity(0.4)),
+        border: Border.all(color: accent.withOpacity(0.4)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -100,7 +234,7 @@ class _PoolCard extends StatelessWidget {
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                 decoration: BoxDecoration(
-                  color: AppColors.gold.withOpacity(0.15),
+                  color: accent.withOpacity(0.15),
                   borderRadius: BorderRadius.circular(5),
                 ),
                 child: Text(
@@ -108,7 +242,7 @@ class _PoolCard extends StatelessWidget {
                   style: GoogleFonts.spaceGrotesk(
                     fontSize: 12,
                     fontWeight: FontWeight.w700,
-                    color: AppColors.gold,
+                    color: accent,
                     letterSpacing: 0.6,
                   ),
                 ),
@@ -118,6 +252,8 @@ class _PoolCard extends StatelessWidget {
                 child: Text(
                   payment.label != null && payment.label!.trim().isNotEmpty
                       ? payment.label!.trim()
+                      : debtPool
+                      ? 'Debt pool · from $source'
                       : 'Pool · from $source',
                   overflow: TextOverflow.ellipsis,
                   style: GoogleFonts.spaceGrotesk(
@@ -132,11 +268,18 @@ class _PoolCard extends StatelessWidget {
                 style: GoogleFonts.spaceGrotesk(
                   fontSize: 14,
                   fontWeight: FontWeight.w700,
-                  color: AppColors.gold,
+                  color: accent,
                 ),
               ),
             ],
           ),
+          if (receiptDebt > 0.0001) ...[
+            const SizedBox(height: 4),
+            Text(
+              'Debt to $source: ${AppUtils.formatAmount(receiptDebt)} outstanding',
+              style: const TextStyle(fontSize: 11, color: AppColors.debtRed),
+            ),
+          ],
           const SizedBox(height: 6),
           Text(
             'Available to branch: ${AppUtils.formatAmount(available)}',
@@ -171,7 +314,7 @@ class _PoolCard extends StatelessWidget {
                     const SizedBox(width: 6),
                     Expanded(
                       child: Text(
-                        'No funds available. Receive money first.',
+                        'No funds available. Add money to the pool first.',
                         style: const TextStyle(
                           fontSize: 11,
                           color: AppColors.red,
@@ -228,7 +371,7 @@ class _PoolCard extends StatelessWidget {
                 if (available > 0) const SizedBox(width: 8),
                 Expanded(
                   child: GestureDetector(
-                    onTap: () => showReceiveIntoPoolSheet(context, payment),
+                    onTap: () => showAddMoneyToPoolSheet(context, payment),
                     child: Container(
                       padding: const EdgeInsets.symmetric(
                         horizontal: 8,
@@ -252,7 +395,7 @@ class _PoolCard extends StatelessWidget {
                           const SizedBox(width: 4),
                           Expanded(
                             child: Text(
-                              'Receive',
+                              'Add Money',
                               style: const TextStyle(
                                 fontSize: 11,
                                 color: AppColors.green,
@@ -274,15 +417,23 @@ class _PoolCard extends StatelessWidget {
     );
   }
 
-  /// Bottom sheet to receive money into the payment pool
-  void showReceiveIntoPoolSheet(BuildContext context, PaymentModel payment) {
+  /// Bottom sheet to add money to the payment pool from free cash, a company
+  /// or another pool's remaining balance.
+  void showAddMoneyToPoolSheet(BuildContext context, PaymentModel payment) {
     final payCtrl = Get.find<PaymentController>();
+    final compCtrl = Get.find<CompanyController>();
 
     final amountCtrl = TextEditingController();
     final noteCtrl = TextEditingController();
     final labelCtrl = TextEditingController();
+    final poolSearchCtrl = TextEditingController();
     DateTime? deadline;
     bool submitting = false;
+
+    _PoolFundSource source = _PoolFundSource.freeCash;
+    String? selectedCompanyId;
+    String? selectedPoolId;
+    String poolSearch = '';
 
     final nextCode = payCtrl.nextBranchCode(payment, null);
 
@@ -294,210 +445,434 @@ class _PoolCard extends StatelessWidget {
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
       builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setModalState) => Padding(
-          padding: EdgeInsets.only(
-            left: 20,
-            right: 20,
-            top: 20,
-            bottom: MediaQuery.of(ctx).viewInsets.bottom + 24,
-          ),
-          child: SafeArea(
-            bottom: true,
-            child: SingleChildScrollView(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Center(
-                    child: Container(
-                      width: 40,
-                      height: 4,
-                      decoration: BoxDecoration(
-                        color: AppColors.border,
-                        borderRadius: BorderRadius.circular(2),
+        builder: (ctx, setModalState) {
+          final PaymentModel? selectedPool = selectedPoolId == null
+              ? null
+              : payCtrl.getPaymentById(selectedPoolId!);
+          final double poolMax = selectedPool == null
+              ? 0
+              : payCtrl.availableFromPool(selectedPool);
+
+          // Candidate pools: everything except this one, filtered by search,
+          // funded pools first.
+          final q = poolSearch.trim().toLowerCase();
+          final candidates =
+              payCtrl.payments.where((p) => p.id != payment.id).where((p) {
+                if (q.isEmpty) return true;
+                return p.code.toLowerCase().contains(q) ||
+                    (p.label ?? '').toLowerCase().contains(q) ||
+                    p.description.toLowerCase().contains(q);
+              }).toList();
+          final funded = candidates
+              .where((p) => payCtrl.availableFromPool(p) > 0.0001)
+              .toList()
+            ..sort(
+              (a, b) => payCtrl
+                  .availableFromPool(b)
+                  .compareTo(payCtrl.availableFromPool(a)),
+            );
+          final empty = candidates
+              .where((p) => payCtrl.availableFromPool(p) <= 0.0001)
+              .toList();
+
+          String bannerText;
+          switch (source) {
+            case _PoolFundSource.freeCash:
+              bannerText =
+                  'Adds fresh cash into this pool and increases your cash in hand.';
+              break;
+            case _PoolFundSource.company:
+              bannerText =
+                  'Cash received from the company goes into this pool. It is recorded as debt you owe them.';
+              break;
+            case _PoolFundSource.pool:
+              bannerText =
+                  'Moves remaining balance from the selected pool into this one. No cash changes hands; both pools keep a record of the move.';
+              break;
+          }
+
+          Widget poolTile(PaymentModel p) {
+            final available = payCtrl.availableFromPool(p);
+            final branches = payCtrl.poolHasBranches(p.id);
+            final enabled = available > 0.0001;
+            return _modeCard(
+              title: p.label != null && p.label!.trim().isNotEmpty
+                  ? '${p.code} · ${p.label!.trim()}'
+                  : '${p.code} · ${p.description}',
+              subtitle: enabled
+                  ? 'Available ${AppUtils.formatAmount(available)}'
+                        '${branches ? ' · has branches' : ' · no branches'}'
+                  : 'Empty pool — nothing left to move',
+              icon: branches
+                  ? Icons.account_tree_outlined
+                  : Icons.circle_outlined,
+              selected: selectedPoolId == p.id,
+              enabled: enabled,
+              onTap: () => setModalState(() {
+                selectedPoolId = p.id;
+                final parsed = double.tryParse(amountCtrl.text.trim());
+                final max = payCtrl.availableFromPool(p);
+                if (parsed != null && parsed > max) {
+                  amountCtrl.text = max.toStringAsFixed(2);
+                }
+              }),
+            );
+          }
+
+          return Padding(
+            padding: EdgeInsets.only(
+              left: 20,
+              right: 20,
+              top: 20,
+              bottom: MediaQuery.of(ctx).viewInsets.bottom + 24,
+            ),
+            child: SafeArea(
+              bottom: true,
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Center(
+                      child: Container(
+                        width: 40,
+                        height: 4,
+                        decoration: BoxDecoration(
+                          color: AppColors.border,
+                          borderRadius: BorderRadius.circular(2),
+                        ),
                       ),
                     ),
-                  ),
-                  const SizedBox(height: 16),
-                  Text(
-                    'Receive to Pool ${payment.code}',
-                    style: GoogleFonts.spaceGrotesk(
-                      fontSize: 17,
-                      fontWeight: FontWeight.w600,
-                      color: AppColors.textPrimary,
-                    ),
-                  ),
-                  const SizedBox(height: 6),
-                  Container(
-                    padding: const EdgeInsets.all(10),
-                    decoration: BoxDecoration(
-                      color: AppColors.greenBg,
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: Row(
-                      children: [
-                        const Icon(
-                          Icons.info_outline,
-                          size: 14,
-                          color: AppColors.green,
-                        ),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: Text(
-                            'Moves cash in hand into this pool so it can be branched onward. Cash in hand: ${AppUtils.formatAmountSigned(payCtrl.cashInHand.value)}',
-                            style: const TextStyle(
-                              fontSize: 12,
-                              color: AppColors.green,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  TextField(
-                    controller: amountCtrl,
-                    keyboardType: const TextInputType.numberWithOptions(
-                      decimal: true,
-                    ),
-                    style: const TextStyle(color: AppColors.textPrimary),
-                    decoration: InputDecoration(
-                      labelText: 'Amount (AED)',
-                      prefixText: 'د.إ ',
-                      helperText:
-                          'Max ${AppUtils.formatAmount(payCtrl.cashInHand.value, showSymbol: false)} (cash in hand)',
-                    ),
-                    onChanged: (val) {
-                      final parsed = double.tryParse(val);
-                      final maxCash = payCtrl.cashInHand.value;
-                      if (parsed != null && maxCash > 0 && parsed > maxCash) {
-                        amountCtrl.text = maxCash.toStringAsFixed(2);
-                        amountCtrl.selection = TextSelection.fromPosition(
-                          TextPosition(offset: amountCtrl.text.length),
-                        );
-                      }
-                    },
-                  ),
-                  const SizedBox(height: 12),
-                  TextField(
-                    controller: labelCtrl,
-                    style: const TextStyle(color: AppColors.textPrimary),
-                    decoration: InputDecoration(
-                      labelText: 'Branch label (optional)',
-                      hintText: 'Names the $nextCode branch',
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  TextField(
-                    controller: noteCtrl,
-                    style: const TextStyle(color: AppColors.textPrimary),
-                    decoration: const InputDecoration(
-                      labelText: 'Note (optional)',
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  GestureDetector(
-                    onTap: () async {
-                      final picked = await _pickThemedDate(ctx, deadline);
-                      if (picked != null) {
-                        setModalState(() => deadline = picked);
-                      }
-                    },
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 14,
-                        vertical: 14,
+                    const SizedBox(height: 16),
+                    Text(
+                      'Add Money to Pool ${payment.code}',
+                      style: GoogleFonts.spaceGrotesk(
+                        fontSize: 17,
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.textPrimary,
                       ),
+                    ),
+                    const SizedBox(height: 6),
+                    Container(
+                      padding: const EdgeInsets.all(10),
                       decoration: BoxDecoration(
-                        color: AppColors.surfaceAlt,
-                        borderRadius: BorderRadius.circular(10),
-                        border: Border.all(color: AppColors.border),
+                        color: AppColors.greenBg,
+                        borderRadius: BorderRadius.circular(8),
                       ),
                       child: Row(
                         children: [
                           const Icon(
-                            Icons.flag_outlined,
-                            size: 16,
-                            color: AppColors.gold,
+                            Icons.info_outline,
+                            size: 14,
+                            color: AppColors.green,
                           ),
-                          const SizedBox(width: 10),
-                          Text(
-                            deadline == null
-                                ? 'Add deadline (optional)'
-                                : AppUtils.formatDate(deadline!),
-                            style: TextStyle(
-                              fontSize: 14,
-                              color: deadline == null
-                                  ? AppColors.textMuted
-                                  : AppColors.textPrimary,
-                            ),
-                          ),
-                          const Spacer(),
-                          if (deadline != null)
-                            GestureDetector(
-                              onTap: () => setModalState(() => deadline = null),
-                              child: const Icon(
-                                Icons.clear,
-                                size: 16,
-                                color: AppColors.textMuted,
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              bannerText,
+                              style: const TextStyle(
+                                fontSize: 12,
+                                color: AppColors.green,
                               ),
                             ),
+                          ),
                         ],
                       ),
                     ),
-                  ),
-                  const SizedBox(height: 20),
-                  SizedBox(
-                    width: double.infinity,
-                    child: GoldButton(
-                      label: 'Receive to Pool',
-                      icon: Icons.arrow_downward,
-                      isLoading: submitting,
-                      onTap: () async {
-                        if (submitting) return;
-                        final amt = double.tryParse(amountCtrl.text.trim());
-                        if (amt == null || amt <= 0) {
-                          AppUtils.showError('Error', 'Enter valid amount');
-                          return;
-                        }
+                    const SizedBox(height: 16),
 
-                        setModalState(() => submitting = true);
-                        try {
-                          await payCtrl.receiveIntoPool(
-                            paymentId: payment.id,
-                            amount: amt,
-                            note: noteCtrl.text.trim().isEmpty
-                                ? null
-                                : noteCtrl.text.trim(),
-                            label: labelCtrl.text.trim().isEmpty
-                                ? null
-                                : labelCtrl.text.trim(),
-                            deadline: deadline,
-                          );
-                          Navigator.pop(ctx);
-                          AppUtils.showSuccess(
-                            'Pool Funded',
-                            '${AppUtils.formatAmount(amt)} moved into pool',
-                          );
-                        } catch (e) {
-                          setModalState(() => submitting = false);
-                          AppUtils.showError(
-                            'Error',
-                            e.toString().replaceFirst('Exception: ', ''),
+                    Text(
+                      'Where is the money coming from?',
+                      style: const TextStyle(
+                        fontSize: 12,
+                        color: AppColors.textSecondary,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    _modeCard(
+                      title: 'Free cash',
+                      subtitle: 'New money without a company attached',
+                      icon: Icons.payments_outlined,
+                      selected: source == _PoolFundSource.freeCash,
+                      enabled: true,
+                      onTap: () => setModalState(() {
+                        source = _PoolFundSource.freeCash;
+                        selectedPoolId = null;
+                      }),
+                    ),
+                    _modeCard(
+                      title: 'From a company',
+                      subtitle: 'Cash received — becomes debt you owe them',
+                      icon: Icons.business_outlined,
+                      selected: source == _PoolFundSource.company,
+                      enabled: true,
+                      onTap: () => setModalState(() {
+                        source = _PoolFundSource.company;
+                        selectedPoolId = null;
+                      }),
+                    ),
+                    _modeCard(
+                      title: 'From another pool',
+                      subtitle: 'Move remaining balance between pools',
+                      icon: Icons.swap_horiz,
+                      selected: source == _PoolFundSource.pool,
+                      enabled: true,
+                      onTap: () => setModalState(() {
+                        source = _PoolFundSource.pool;
+                        selectedCompanyId = null;
+                      }),
+                    ),
+                    const SizedBox(height: 8),
+
+                    if (source == _PoolFundSource.company) ...[
+                      DropdownButtonFormField<String>(
+                        value: selectedCompanyId,
+                        dropdownColor: AppColors.surfaceAlt,
+                        style: const TextStyle(color: AppColors.textPrimary),
+                        decoration: const InputDecoration(
+                          labelText: 'From company',
+                        ),
+                        items: compCtrl.companies
+                            .map(
+                              (c) => DropdownMenuItem(
+                                value: c.id,
+                                child: Text(c.name),
+                              ),
+                            )
+                            .toList(),
+                        onChanged: (val) =>
+                            setModalState(() => selectedCompanyId = val),
+                      ),
+                      const SizedBox(height: 12),
+                    ],
+
+                    if (source == _PoolFundSource.pool) ...[
+                      TextField(
+                        controller: poolSearchCtrl,
+                        style: const TextStyle(color: AppColors.textPrimary),
+                        decoration: const InputDecoration(
+                          labelText: 'Search pools',
+                          prefixIcon: Icon(
+                            Icons.search,
+                            size: 18,
+                            color: AppColors.textMuted,
+                          ),
+                        ),
+                        onChanged: (val) =>
+                            setModalState(() => poolSearch = val),
+                      ),
+                      const SizedBox(height: 8),
+                      if (funded.isEmpty && empty.isEmpty)
+                        const Padding(
+                          padding: EdgeInsets.symmetric(vertical: 8),
+                          child: Text(
+                            'No other pools found.',
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: AppColors.textMuted,
+                            ),
+                          ),
+                        ),
+                      if (funded.isNotEmpty) ...[
+                        const Text(
+                          'Pools with balance',
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: AppColors.textMuted,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        ...funded.map(poolTile),
+                      ],
+                      if (empty.isNotEmpty) ...[
+                        const SizedBox(height: 4),
+                        const Text(
+                          'Empty pools',
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: AppColors.textMuted,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        ...empty.map(poolTile),
+                      ],
+                      const SizedBox(height: 8),
+                    ],
+
+                    TextField(
+                      controller: amountCtrl,
+                      keyboardType: const TextInputType.numberWithOptions(
+                        decimal: true,
+                      ),
+                      style: const TextStyle(color: AppColors.textPrimary),
+                      decoration: InputDecoration(
+                        labelText: 'Amount (AED)',
+                        prefixText: 'د.إ ',
+                        helperText: source == _PoolFundSource.pool
+                            ? (selectedPool == null
+                                  ? 'Select a source pool first'
+                                  : 'Max ${AppUtils.formatAmount(poolMax, showSymbol: false)} from pool ${selectedPool.code}')
+                            : null,
+                      ),
+                      onChanged: (val) {
+                        if (source != _PoolFundSource.pool) return;
+                        final parsed = double.tryParse(val);
+                        if (parsed != null && poolMax > 0 && parsed > poolMax) {
+                          amountCtrl.text = poolMax.toStringAsFixed(2);
+                          amountCtrl.selection = TextSelection.fromPosition(
+                            TextPosition(offset: amountCtrl.text.length),
                           );
                         }
                       },
                     ),
-                  ),
-                ],
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: labelCtrl,
+                      style: const TextStyle(color: AppColors.textPrimary),
+                      decoration: InputDecoration(
+                        labelText: 'Branch label (optional)',
+                        hintText: 'Names the $nextCode branch',
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: noteCtrl,
+                      style: const TextStyle(color: AppColors.textPrimary),
+                      decoration: const InputDecoration(
+                        labelText: 'Note (optional)',
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    GestureDetector(
+                      onTap: () async {
+                        final picked = await _pickThemedDate(ctx, deadline);
+                        if (picked != null) {
+                          setModalState(() => deadline = picked);
+                        }
+                      },
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 14,
+                          vertical: 14,
+                        ),
+                        decoration: BoxDecoration(
+                          color: AppColors.surfaceAlt,
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(color: AppColors.border),
+                        ),
+                        child: Row(
+                          children: [
+                            const Icon(
+                              Icons.flag_outlined,
+                              size: 16,
+                              color: AppColors.gold,
+                            ),
+                            const SizedBox(width: 10),
+                            Text(
+                              deadline == null
+                                  ? 'Add deadline (optional)'
+                                  : AppUtils.formatDate(deadline!),
+                              style: TextStyle(
+                                fontSize: 14,
+                                color: deadline == null
+                                    ? AppColors.textMuted
+                                    : AppColors.textPrimary,
+                              ),
+                            ),
+                            const Spacer(),
+                            if (deadline != null)
+                              GestureDetector(
+                                onTap: () =>
+                                    setModalState(() => deadline = null),
+                                child: const Icon(
+                                  Icons.clear,
+                                  size: 16,
+                                  color: AppColors.textMuted,
+                                ),
+                              ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 20),
+                    SizedBox(
+                      width: double.infinity,
+                      child: GoldButton(
+                        label: 'Add to Pool',
+                        icon: Icons.arrow_downward,
+                        isLoading: submitting,
+                        onTap: () async {
+                          if (submitting) return;
+                          final amt = double.tryParse(amountCtrl.text.trim());
+                          if (amt == null || amt <= 0) {
+                            AppUtils.showError('Error', 'Enter valid amount');
+                            return;
+                          }
+                          if (source == _PoolFundSource.company &&
+                              selectedCompanyId == null) {
+                            AppUtils.showError(
+                              'Error',
+                              'Select the company the money came from',
+                            );
+                            return;
+                          }
+                          if (source == _PoolFundSource.pool &&
+                              selectedPoolId == null) {
+                            AppUtils.showError(
+                              'Error',
+                              'Select the pool to move money from',
+                            );
+                            return;
+                          }
+
+                          setModalState(() => submitting = true);
+                          try {
+                            await payCtrl.receiveIntoPool(
+                              paymentId: payment.id,
+                              amount: amt,
+                              fromCompanyId: source == _PoolFundSource.company
+                                  ? selectedCompanyId
+                                  : null,
+                              sourcePaymentId: source == _PoolFundSource.pool
+                                  ? selectedPoolId
+                                  : null,
+                              note: noteCtrl.text.trim().isEmpty
+                                  ? null
+                                  : noteCtrl.text.trim(),
+                              label: labelCtrl.text.trim().isEmpty
+                                  ? null
+                                  : labelCtrl.text.trim(),
+                              deadline: deadline,
+                            );
+                            Navigator.pop(ctx);
+                            AppUtils.showSuccess(
+                              'Pool Funded',
+                              '${AppUtils.formatAmount(amt)} added to pool ${payment.code}',
+                            );
+                          } catch (e) {
+                            setModalState(() => submitting = false);
+                            AppUtils.showError(
+                              'Error',
+                              e.toString().replaceFirst('Exception: ', ''),
+                            );
+                          }
+                        },
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ),
-          ),
-        ),
+          );
+        },
       ),
     );
   }
 }
+
+/// Where the money added to a pool comes from.
+enum _PoolFundSource { freeCash, company, pool }
 
 class _TransferNode extends StatefulWidget {
   final TransferModel transfer;
@@ -528,11 +903,22 @@ class _TransferNodeState extends State<_TransferNode> {
       ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
     final hasChildren = children.isNotEmpty;
 
-    final fromName = widget.transfer.fromCompanyId == null
+    final sourcePool = widget.transfer.sourcePaymentId == null
+        ? null
+        : payCtrl.getPaymentById(widget.transfer.sourcePaymentId!);
+    final isIncoming = widget.transfer.parentTransferId == null &&
+        widget.transfer.toCompanyId == null;
+    final fromName = sourcePool != null
+        ? 'Pool ${sourcePool.code}'
+        : widget.transfer.sourcePaymentId != null
+        ? 'Pool ?'
+        : widget.transfer.fromCompanyId == null
         ? 'Me'
         : compCtrl.getNameById(widget.transfer.fromCompanyId);
     final isReturnToMe = widget.transfer.toCompanyId == null;
-    final toName = isReturnToMe
+    final toName = isIncoming
+        ? 'Pool ${widget.payment.code}'
+        : isReturnToMe
         ? 'Me (returned)'
         : compCtrl.getNameById(widget.transfer.toCompanyId);
 
@@ -1561,26 +1947,39 @@ void showAddBranchSheet(
                     ),
                     const SizedBox(height: 8),
 
-                    // Option 1: Combined balance (only if not already used)
-                    if (!totalUsed)
-                      _modeCard(
-                        title: 'Combined balance',
-                        subtitle:
-                            'Send any amount up to ${AppUtils.formatAmount(totalAvail)}',
-                        icon: Icons.account_balance_wallet_outlined,
-                        selected:
-                            sourceType == TransferSourceType.fromTotal &&
-                            !sliceMode,
-                        enabled: true,
-                        onTap: () => setModalState(() {
-                          sourceType = TransferSourceType.fromTotal;
-                          selectedSliceTransferId = null;
-                          amountCtrl.clear();
-                        }),
-                      ),
+                    // Option 1: Combined balance
+                    _modeCard(
+                      title: 'Combined balance',
+                      subtitle:
+                          'Send any amount up to ${AppUtils.formatAmount(totalAvail)}',
+                      icon: Icons.account_balance_wallet_outlined,
+                      selected:
+                          sourceType == TransferSourceType.fromTotal &&
+                          !sliceMode,
+                      enabled: true,
+                      onTap: () => setModalState(() {
+                        sourceType = TransferSourceType.fromTotal;
+                        selectedSliceTransferId = null;
+                        amountCtrl.clear();
+                      }),
+                    ),
 
-                    // Option 2: Specific slices (show all incoming transfers)
-                    if (incomingSlices.isNotEmpty) ...[
+                    // Option 2: Specific slices. Once the company has sent
+                    // from its combined total, the slices are merged and can
+                    // no longer be told apart, so they are not offered.
+                    if (totalUsed)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 4, bottom: 4),
+                        child: Text(
+                          'Slices merged — $companyName already sent from its '
+                          'combined total in this pool.',
+                          style: const TextStyle(
+                            fontSize: 11,
+                            color: AppColors.textMuted,
+                          ),
+                        ),
+                      ),
+                    if (!totalUsed && incomingSlices.isNotEmpty) ...[
                       const SizedBox(height: 4),
                       Text(
                         'Specific slices (lock to one incoming payment)',
@@ -1900,13 +2299,44 @@ Future<DateTime?> _pickThemedDate(BuildContext context, DateTime? initial) {
   );
 }
 
-/// Edit a branch's label, note and deadline (amount/structure stay fixed).
+/// Edit a branch's amount, label, note and deadline. The amount obeys the
+/// branch's rules: pool branches and pool-to-pool moves are capped by the
+/// available pool funds, while company-to-company branches accept any amount
+/// (the excess over the sender's balance becomes debt).
 void showEditBranchSheet(BuildContext context, TransferModel t) {
   final payCtrl = Get.find<PaymentController>();
   final labelCtrl = TextEditingController(text: t.label ?? '');
   final noteCtrl = TextEditingController(text: t.note ?? '');
+  final amountCtrl = TextEditingController(text: t.amount.toStringAsFixed(2));
   DateTime? deadline = t.deadline;
   bool submitting = false;
+
+  final payment = payCtrl.getPaymentById(t.paymentId);
+  final bool isIncoming = t.parentTransferId == null && t.toCompanyId == null;
+  final bool isRootReceipt =
+      payment != null && payment.rootTransferId == t.id;
+  final bool isPoolBranch = t.parentTransferId == null && t.toCompanyId != null;
+
+  final bool amountEditable = !isRootReceipt;
+  double? maxAmount;
+  String amountHelper;
+  if (isRootReceipt) {
+    amountHelper = 'Original receipt — edit the pool amount instead';
+  } else if (isIncoming && t.sourcePaymentId != null) {
+    final source = payCtrl.getPaymentById(t.sourcePaymentId!);
+    maxAmount =
+        t.amount + (source == null ? 0 : payCtrl.availableFromPool(source));
+    amountHelper =
+        'Max ${AppUtils.formatAmount(maxAmount, showSymbol: false)} — limited by pool ${source?.code ?? '?'}';
+  } else if (isIncoming) {
+    amountHelper = 'Resizes this top-up; the pool grows or shrinks with it';
+  } else if (isPoolBranch && payment != null) {
+    maxAmount = t.amount + payCtrl.availableFromPool(payment);
+    amountHelper =
+        'Max ${AppUtils.formatAmount(maxAmount, showSymbol: false)} — limited by pool ${payment.code}';
+  } else {
+    amountHelper = 'Any amount — the excess over the sender\'s balance becomes debt';
+  }
 
   showModalBottomSheet(
     context: context,
@@ -1950,6 +2380,35 @@ void showEditBranchSheet(BuildContext context, TransferModel t) {
                   ),
                 ),
                 const SizedBox(height: 16),
+                TextField(
+                  controller: amountCtrl,
+                  readOnly: !amountEditable,
+                  keyboardType: const TextInputType.numberWithOptions(
+                    decimal: true,
+                  ),
+                  style: const TextStyle(color: AppColors.textPrimary),
+                  decoration: InputDecoration(
+                    labelText: 'Amount (AED)',
+                    prefixText: 'د.إ ',
+                    helperText: amountHelper,
+                    helperMaxLines: 2,
+                    helperStyle: const TextStyle(
+                      fontSize: 11,
+                      color: AppColors.textMuted,
+                    ),
+                  ),
+                  onChanged: (val) {
+                    final cap = maxAmount;
+                    final parsed = double.tryParse(val);
+                    if (cap != null && parsed != null && parsed > cap) {
+                      amountCtrl.text = cap.toStringAsFixed(2);
+                      amountCtrl.selection = TextSelection.fromPosition(
+                        TextPosition(offset: amountCtrl.text.length),
+                      );
+                    }
+                  },
+                ),
+                const SizedBox(height: 12),
                 TextField(
                   controller: labelCtrl,
                   style: const TextStyle(color: AppColors.textPrimary),
@@ -2018,6 +2477,14 @@ void showEditBranchSheet(BuildContext context, TransferModel t) {
                     isLoading: submitting,
                     onTap: () async {
                       if (submitting) return;
+                      double? amt;
+                      if (amountEditable) {
+                        amt = double.tryParse(amountCtrl.text.trim());
+                        if (amt == null || amt <= 0) {
+                          AppUtils.showError('Error', 'Enter valid amount');
+                          return;
+                        }
+                      }
                       setModalState(() => submitting = true);
                       try {
                         await payCtrl.updateTransfer(
@@ -2025,12 +2492,16 @@ void showEditBranchSheet(BuildContext context, TransferModel t) {
                           label: labelCtrl.text.trim(),
                           note: noteCtrl.text.trim(),
                           deadline: deadline,
+                          amount: amt,
                         );
                         Navigator.pop(ctx);
                         AppUtils.showSuccess('Branch Updated', 'Changes saved');
                       } catch (e) {
                         setModalState(() => submitting = false);
-                        AppUtils.showError('Error', e.toString());
+                        AppUtils.showError(
+                          'Error',
+                          e.toString().replaceFirst('Exception: ', ''),
+                        );
                       }
                     },
                   ),
@@ -2044,10 +2515,9 @@ void showEditBranchSheet(BuildContext context, TransferModel t) {
   );
 }
 
-/// Settle the debt sitting on a branch. The amount is capped at the remaining
-/// debt and, for pool/cash sources, at the funds actually available. Clearing
-/// from the company is a waive (the creditor removes the shortfall, no money
-/// moves).
+/// Settle the debt sitting on a branch. Debts are cleared strictly from the
+/// pool they belong to — the amount is capped at the remaining debt and at
+/// what the pool actually has. An empty pool must be topped up first.
 void showClearDebtSheet(BuildContext context, TransferModel t) {
   final payCtrl = Get.find<PaymentController>();
   final compCtrl = Get.find<CompanyController>();
@@ -2059,16 +2529,14 @@ void showClearDebtSheet(BuildContext context, TransferModel t) {
   final creditorName = compCtrl.getNameById(t.fromCompanyId);
   final remaining = payCtrl.remainingDebtForTransfer(t);
   final poolAvailable = payCtrl.availableFromPool(payment);
-  final cashAvailable = payCtrl.cashInHand.value;
+  final double maxClearable =
+      remaining < poolAvailable ? remaining : poolAvailable;
 
-  final amountCtrl = TextEditingController(text: remaining.toStringAsFixed(2));
+  final amountCtrl = TextEditingController(
+    text: (maxClearable > 0 ? maxClearable : 0).toStringAsFixed(2),
+  );
   final noteCtrl = TextEditingController();
-  // Default to a source that actually has funds; fall back to a company waive.
-  DebtClearSource source = cashAvailable > 0.0001
-      ? DebtClearSource.cash
-      : poolAvailable > 0.0001
-      ? DebtClearSource.pool
-      : DebtClearSource.company;
+  const DebtClearSource source = DebtClearSource.pool;
   DateTime date = DateTime.now();
   bool submitting = false;
 
@@ -2081,77 +2549,6 @@ void showClearDebtSheet(BuildContext context, TransferModel t) {
     ),
     builder: (ctx) => StatefulBuilder(
       builder: (ctx, setModalState) {
-        Widget sourceTile(
-          DebtClearSource value,
-          IconData icon,
-          String title,
-          String subtitle,
-          bool enabled,
-        ) {
-          final selected = source == value;
-          return Opacity(
-            opacity: enabled ? 1 : 0.45,
-            child: GestureDetector(
-              onTap: enabled
-                  ? () => setModalState(() => source = value)
-                  : null,
-              child: Container(
-                margin: const EdgeInsets.only(bottom: 10),
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: selected
-                      ? AppColors.gold.withOpacity(0.10)
-                      : AppColors.surfaceAlt,
-                  borderRadius: BorderRadius.circular(10),
-                  border: Border.all(
-                    color: selected ? AppColors.gold : AppColors.border,
-                    width: selected ? 1.5 : 1,
-                  ),
-                ),
-                child: Row(
-                  children: [
-                    Icon(
-                      icon,
-                      size: 20,
-                      color: selected ? AppColors.gold : AppColors.textSecondary,
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            title,
-                            style: const TextStyle(
-                              fontSize: 14,
-                              fontWeight: FontWeight.w600,
-                              color: AppColors.textPrimary,
-                            ),
-                          ),
-                          const SizedBox(height: 2),
-                          Text(
-                            subtitle,
-                            style: const TextStyle(
-                              fontSize: 11,
-                              color: AppColors.textSecondary,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    if (selected)
-                      const Icon(
-                        Icons.check_circle,
-                        size: 18,
-                        color: AppColors.gold,
-                      ),
-                  ],
-                ),
-              ),
-            ),
-          );
-        }
-
         return Padding(
           padding: EdgeInsets.only(
             left: 20,
@@ -2204,12 +2601,14 @@ void showClearDebtSheet(BuildContext context, TransferModel t) {
                       labelText: 'Amount to clear',
                       prefixText: '${AppConstants.currencySymbol} ',
                       helperText:
-                          'Max ${AppUtils.formatAmount(remaining, showSymbol: false)}',
+                          'Max ${AppUtils.formatAmount(maxClearable > 0 ? maxClearable : 0, showSymbol: false)} (pool balance and remaining debt)',
                     ),
                     onChanged: (val) {
                       final parsed = double.tryParse(val);
-                      if (parsed != null && parsed > remaining) {
-                        amountCtrl.text = remaining.toStringAsFixed(2);
+                      if (parsed != null &&
+                          maxClearable > 0 &&
+                          parsed > maxClearable) {
+                        amountCtrl.text = maxClearable.toStringAsFixed(2);
                         amountCtrl.selection = TextSelection.fromPosition(
                           TextPosition(offset: amountCtrl.text.length),
                         );
@@ -2222,27 +2621,82 @@ void showClearDebtSheet(BuildContext context, TransferModel t) {
                     style: AppTextStyles.labelSmall,
                   ),
                   const SizedBox(height: 8),
-                  sourceTile(
-                    DebtClearSource.pool,
-                    Icons.account_balance_wallet_outlined,
-                    'From pool ${payment.code}',
-                    'Available ${AppUtils.formatAmount(poolAvailable)}',
-                    poolAvailable > 0.0001,
+                  // Debts are settled strictly from the pool they belong to.
+                  Container(
+                    margin: const EdgeInsets.only(bottom: 10),
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: AppColors.gold.withOpacity(0.10),
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: AppColors.gold, width: 1.5),
+                    ),
+                    child: Row(
+                      children: [
+                        const Icon(
+                          Icons.account_balance_wallet_outlined,
+                          size: 20,
+                          color: AppColors.gold,
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'From pool ${payment.code}',
+                                style: const TextStyle(
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w600,
+                                  color: AppColors.textPrimary,
+                                ),
+                              ),
+                              const SizedBox(height: 2),
+                              Text(
+                                'Available ${AppUtils.formatAmount(poolAvailable)}',
+                                style: const TextStyle(
+                                  fontSize: 11,
+                                  color: AppColors.textSecondary,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const Icon(
+                          Icons.check_circle,
+                          size: 18,
+                          color: AppColors.gold,
+                        ),
+                      ],
+                    ),
                   ),
-                  sourceTile(
-                    DebtClearSource.cash,
-                    Icons.payments_outlined,
-                    'From cash in hand',
-                    'Available ${AppUtils.formatAmount(cashAvailable)}',
-                    cashAvailable > 0.0001,
-                  ),
-                  sourceTile(
-                    DebtClearSource.company,
-                    Icons.handshake_outlined,
-                    'Waived by $creditorName',
-                    'Remove the shortfall, no money moves',
-                    true,
-                  ),
+                  if (poolAvailable <= 0.0001)
+                    Container(
+                      margin: const EdgeInsets.only(bottom: 10),
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(
+                        color: AppColors.redBg,
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Row(
+                        children: [
+                          const Icon(
+                            Icons.warning_amber_rounded,
+                            size: 14,
+                            color: AppColors.red,
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              'Pool ${payment.code} is empty. Add money to the pool before clearing this debt.',
+                              style: const TextStyle(
+                                fontSize: 12,
+                                color: AppColors.red,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
                   const SizedBox(height: 4),
                   GestureDetector(
                     onTap: () async {

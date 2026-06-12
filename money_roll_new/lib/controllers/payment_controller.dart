@@ -37,6 +37,33 @@ class PaymentController extends GetxController {
     _cashBox = Hive.box<CashTransactionModel>(AppConstants.boxCashTx);
     _debtBox = Hive.box<DebtClearanceModel>(AppConstants.boxDebtClearances);
     loadAll();
+    _migrateCompanyReceiptDebts();
+  }
+
+  /// One-time fixup: company-funded incoming records (receipts and top-ups)
+  /// created before they carried the debt flag get it now, so the Clear Debt
+  /// flow works on them. Idempotent.
+  Future<void> _migrateCompanyReceiptDebts() async {
+    var changed = false;
+    for (final t in _transferBox.values) {
+      final isCompanyIncoming =
+          t.parentTransferId == null &&
+          t.toCompanyId == null &&
+          t.fromCompanyId != null &&
+          t.sourcePaymentId == null;
+      if (isCompanyIncoming && !t.isDebt) {
+        t.isDebt = true;
+        t.debtAmount = t.amount;
+        await _transferBox.put(t.id, t);
+        changed = true;
+      }
+    }
+    if (changed) {
+      for (final p in _paymentBox.values) {
+        await _updatePaymentStats(p.id);
+      }
+      loadAll();
+    }
   }
 
   void loadAll() {
@@ -172,6 +199,10 @@ class PaymentController extends GetxController {
               t.toCompanyId != null,
         )
         .fold(0.0, (s, t) => s + t.amount);
+    // Money moved out of this pool into other pools.
+    final movedToOtherPools = _transferBox.values
+        .where((t) => t.sourcePaymentId == payment.id)
+        .fold(0.0, (s, t) => s + t.amount);
     // Debts cleared from this pool also draw down its un-branched balance.
     final clearedFromPool = _debtBox.values
         .where(
@@ -179,7 +210,30 @@ class PaymentController extends GetxController {
               c.paymentId == payment.id && c.source == DebtClearSource.pool,
         )
         .fold(0.0, (s, c) => s + c.amount);
-    return payment.amount - used - clearedFromPool;
+    return payment.amount - used - movedToOtherPools - clearedFromPool;
+  }
+
+  /// Incoming pool-to-pool moves recorded on [paymentId] (money this pool
+  /// received from other pools).
+  List<TransferModel> poolFundingsInto(String paymentId) {
+    return _transferBox.values
+        .where((t) => t.paymentId == paymentId && t.sourcePaymentId != null)
+        .toList()
+      ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
+  }
+
+  /// Outgoing pool-to-pool moves drawn from [paymentId] (money this pool sent
+  /// to other pools). The records themselves live on the receiving pool.
+  List<TransferModel> poolFundingsOutOf(String paymentId) {
+    return _transferBox.values
+        .where((t) => t.sourcePaymentId == paymentId)
+        .toList()
+      ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
+  }
+
+  /// True when the pool has at least one branch or funding record.
+  bool poolHasBranches(String paymentId) {
+    return _transferBox.values.any((t) => t.paymentId == paymentId);
   }
 
   // ─── Payment ─────────────────────────────────────────────────────
@@ -226,6 +280,28 @@ class PaymentController extends GetxController {
         createdAt: DateTime.now(),
       );
       await _cashBox.put(cashTx.id, cashTx);
+
+      // Cash received from a company is money I owe them until settled. The
+      // root receipt record (company → ME) registers that debt; it carries the
+      // debt flag so it can be settled through the Clear Debt flow.
+      if (companyId != null) {
+        final receipt = TransferModel(
+          id: _uuid.v4(),
+          paymentId: payment.id,
+          parentTransferId: null,
+          amount: amount,
+          fromCompanyId: companyId,
+          toCompanyId: null,
+          sourceType: TransferSourceType.fromTotal,
+          createdAt: DateTime.now(),
+          isDebt: true,
+          debtAmount: amount,
+          code: nextBranchCode(payment, null),
+        );
+        await _transferBox.put(receipt.id, receipt);
+        payment.rootTransferId = receipt.id;
+        await _paymentBox.put(payment.id, payment);
+      }
     } else {
       // A "sent" payment is a pool that is immediately branched in full to the
       // chosen company (ME → company = M1B1). The cash deduction happens inside
@@ -374,6 +450,11 @@ class PaymentController extends GetxController {
         .where((t) => t.isDebt)
         .fold(0.0, (sum, t) => sum + remainingDebtForTransfer(t));
 
+    // Money moved out of this pool into other pools.
+    final movedToOtherPools = _transferBox.values
+        .where((t) => t.sourcePaymentId == paymentId)
+        .fold(0.0, (s, t) => s + t.amount);
+
     // Debts settled from this pool also draw down its remaining balance, so the
     // displayed remaining stays in step with availableFromPool.
     final clearedFromPool = _debtBox.values
@@ -382,7 +463,8 @@ class PaymentController extends GetxController {
         )
         .fold(0.0, (s, c) => s + c.amount);
 
-    payment.remainingAmount = payment.amount - fromPool - clearedFromPool;
+    payment.remainingAmount =
+        payment.amount - fromPool - movedToOtherPools - clearedFromPool;
     payment.totalDebt = totalDebt;
     await _paymentBox.put(paymentId, payment);
   }
@@ -436,13 +518,21 @@ class PaymentController extends GetxController {
 
   /// A company's combined, still-available balance inside one payment:
   /// everything it received minus everything it has forwarded (by any method).
+  /// Root-level incoming records (receipts / pool top-ups, where the company
+  /// handed money to ME) are the pool's origin, not forwards in the chain, so
+  /// they are excluded.
   double companyNodeBalance(String paymentId, String? companyId) {
     if (companyId == null) return 0;
     final incoming = _transferBox.values
         .where((t) => t.paymentId == paymentId && t.toCompanyId == companyId)
         .fold(0.0, (s, t) => s + t.amount);
     final forwarded = _transferBox.values
-        .where((t) => t.paymentId == paymentId && t.fromCompanyId == companyId)
+        .where(
+          (t) =>
+              t.paymentId == paymentId &&
+              t.fromCompanyId == companyId &&
+              !(t.parentTransferId == null && t.toCompanyId == null),
+        )
         .fold(0.0, (s, t) => s + t.amount);
     return incoming - forwarded;
   }
@@ -462,14 +552,16 @@ class PaymentController extends GetxController {
 
   /// True once a company has forwarded from its combined total in this payment.
   /// After that, locking onto individual slices is no longer offered, because
-  /// the slices can no longer be cleanly told apart.
+  /// the amounts merged and the slices can no longer be cleanly told apart.
+  /// Root-level incoming records (receipts / top-ups) are not forwards.
   bool hasTotalForward(String paymentId, String? companyId) {
     if (companyId == null) return false;
     return _transferBox.values.any(
       (t) =>
           t.paymentId == paymentId &&
           t.fromCompanyId == companyId &&
-          t.sourceType == TransferSourceType.fromTotal,
+          t.sourceType == TransferSourceType.fromTotal &&
+          !(t.parentTransferId == null && t.toCompanyId == null),
     );
   }
 
@@ -539,6 +631,7 @@ class PaymentController extends GetxController {
               'toCompanyId': t.toCompanyId,
               'sourceType': t.sourceType.name,
               'specificParentTransferId': t.specificParentTransferId,
+              'sourcePaymentId': t.sourcePaymentId,
               'isDebt': t.isDebt,
               'debtAmount': t.debtAmount,
               'note': t.note,
@@ -578,6 +671,13 @@ class PaymentController extends GetxController {
   }
 
   Future<void> deletePayment(String paymentId) async {
+    // Pools that funded this one get their balance back when the funding
+    // records below are removed; refresh their stats afterwards.
+    final sourcePoolIds = _transferBox.values
+        .where((t) => t.paymentId == paymentId && t.sourcePaymentId != null)
+        .map((t) => t.sourcePaymentId!)
+        .where((id) => id != paymentId)
+        .toSet();
     // Remove all transfers
     final toRemove = _transferBox.values
         .where((t) => t.paymentId == paymentId)
@@ -603,6 +703,9 @@ class PaymentController extends GetxController {
       await _debtBox.delete(id);
     }
     await _paymentBox.delete(paymentId);
+    for (final sid in sourcePoolIds) {
+      await _updatePaymentStats(sid);
+    }
     loadAll();
   }
 
@@ -613,10 +716,10 @@ class PaymentController extends GetxController {
   }
 
   /// Update a payment. Description, label, note, date and deadline are always
-  /// editable. Amount and company can only change while the payment has no
-  /// branches yet — otherwise they stay locked to keep the tree and cash
-  /// consistent. When amount/company change, any cash entry tied to the payment
-  /// is kept in sync.
+  /// editable. The amount can change as long as it still covers everything
+  /// already branched out, moved to other pools, or used to clear debts. The
+  /// company can only change while the payment has no branches, so the debt
+  /// records in the tree stay consistent.
   Future<void> updatePayment(
     String paymentId, {
     required String description,
@@ -636,23 +739,131 @@ class PaymentController extends GetxController {
     p.date = date;
     p.deadline = deadline;
 
+    // The root receipt record is bookkeeping, not a real branch; it should
+    // not lock the company field on its own.
     final hasBranches = _transferBox.values.any(
-      (t) => t.paymentId == paymentId,
+      (t) => t.paymentId == paymentId && t.id != p.rootTransferId,
     );
-    if (!hasBranches) {
-      if (amount != null && amount > 0) {
-        p.amount = amount;
-        p.remainingAmount = amount;
+
+    if (amount != null && amount > 0 && (amount - p.amount).abs() > 0.0001) {
+      // The pool can never shrink below what was already used from it.
+      final used = p.amount - availableFromPool(p);
+      if (amount < used - 0.0001) {
+        throw Exception(
+          'Pool ${p.code} has already used ${used.toStringAsFixed(2)} — '
+          'amount cannot go below that',
+        );
       }
-      p.companyId = companyId;
-      // Keep the related cash entry (the received +cash) in sync.
-      final cashList = _cashBox.values
-          .where((tx) => tx.relatedPaymentId == paymentId)
+
+      // The original receipt portion is the pool total minus everything that
+      // was received into it later (top-ups and pool-to-pool moves). The
+      // receipt cash entry and the root debt record both track that portion.
+      final extras = _transferBox.values
+          .where(
+            (t) =>
+                t.paymentId == paymentId &&
+                t.parentTransferId == null &&
+                t.toCompanyId == null &&
+                t.id != p.rootTransferId,
+          )
+          .fold(0.0, (s, t) => s + t.amount);
+      final newReceipt = amount - extras;
+      if (newReceipt < -0.0001) {
+        throw Exception(
+          'Amount cannot go below the ${extras.toStringAsFixed(2)} '
+          'received into this pool later',
+        );
+      }
+
+      p.amount = amount;
+
+      // Receipt cash entry (the one without a transfer link) follows along.
+      final receiptTxs = _cashBox.values
+          .where(
+            (tx) =>
+                tx.relatedPaymentId == paymentId &&
+                tx.relatedTransferId == null,
+          )
           .toList();
-      for (final tx in cashList) {
-        tx.amount = p.amount;
+      for (final tx in receiptTxs) {
+        tx.amount = newReceipt;
+        await _cashBox.put(tx.id, tx);
+      }
+
+      // The debt record toward the source company follows it too.
+      if (p.rootTransferId != null) {
+        final root = _transferBox.get(p.rootTransferId);
+        if (root != null) {
+          final cleared = clearedForTransfer(root.id);
+          if (cleared > newReceipt + 0.0001) {
+            throw Exception(
+              '${cleared.toStringAsFixed(2)} of this receipt\'s debt was '
+              'already cleared — amount cannot go below that',
+            );
+          }
+          root.amount = newReceipt;
+          root.debtAmount = newReceipt;
+          root.isDebt = newReceipt > 0.0001;
+          await _transferBox.put(root.id, root);
+        }
+      }
+    }
+
+    if (!hasBranches) {
+      p.companyId = companyId;
+      final receiptTxs = _cashBox.values
+          .where(
+            (tx) =>
+                tx.relatedPaymentId == paymentId &&
+                tx.relatedTransferId == null,
+          )
+          .toList();
+      for (final tx in receiptTxs) {
         if (p.type == PaymentType.received) tx.fromCompanyId = companyId;
         await _cashBox.put(tx.id, tx);
+      }
+      // Keep the root debt record in step with the creditor company:
+      // re-point it, drop it when the payment becomes a free entry, or create
+      // it when a company is set for the first time.
+      if (p.type == PaymentType.received) {
+        final root = p.rootTransferId == null
+            ? null
+            : _transferBox.get(p.rootTransferId);
+        if (root != null &&
+            root.fromCompanyId != companyId &&
+            clearedForTransfer(root.id) > 0.0001) {
+          throw Exception(
+            'Part of this receipt\'s debt was already cleared — the company '
+            'cannot change anymore',
+          );
+        }
+        if (companyId == null) {
+          if (root != null) {
+            await _transferBox.delete(root.id);
+            p.rootTransferId = null;
+          }
+        } else if (root != null) {
+          if (root.fromCompanyId != companyId) {
+            root.fromCompanyId = companyId;
+            await _transferBox.put(root.id, root);
+          }
+        } else {
+          final receipt = TransferModel(
+            id: _uuid.v4(),
+            paymentId: paymentId,
+            parentTransferId: null,
+            amount: p.amount,
+            fromCompanyId: companyId,
+            toCompanyId: null,
+            sourceType: TransferSourceType.fromTotal,
+            createdAt: DateTime.now(),
+            isDebt: true,
+            debtAmount: p.amount,
+            code: nextBranchCode(p, null),
+          );
+          await _transferBox.put(receipt.id, receipt);
+          p.rootTransferId = receipt.id;
+        }
       }
     }
 
@@ -661,20 +872,161 @@ class PaymentController extends GetxController {
     loadAll();
   }
 
-  /// Update editable metadata on a branch (label, note, deadline).
+  /// Update a branch (label, note, deadline and, when given, the amount).
+  ///
+  /// Amount edits follow the rules of the branch kind:
+  /// - pool branches (ME → company) cannot exceed the pool's available funds;
+  /// - incoming records (top-ups / pool-to-pool moves) grow or shrink the pool,
+  ///   and pool-to-pool moves cannot exceed the source pool's spare balance;
+  /// - company-to-company branches may be set to any amount — whatever exceeds
+  ///   the sender's balance becomes debt, recalculated on save;
+  /// - no edit may take back money the receiver has already forwarded onward.
   Future<void> updateTransfer(
     String transferId, {
     String? label,
     String? note,
     DateTime? deadline,
+    double? amount,
   }) async {
     final t = _transferBox.get(transferId);
     if (t == null) return;
+
+    String? sourcePoolToRefresh;
+    if (amount != null && (amount - t.amount).abs() > 0.0001) {
+      if (amount <= 0) throw Exception('Enter an amount greater than zero');
+      await _applyTransferAmountEdit(t, amount);
+      sourcePoolToRefresh = t.sourcePaymentId;
+    }
+
     t.label = (label != null && label.trim().isNotEmpty) ? label.trim() : null;
     t.note = (note != null && note.trim().isNotEmpty) ? note.trim() : null;
     t.deadline = deadline;
     await _transferBox.put(transferId, t);
+    await _updatePaymentStats(t.paymentId);
+    if (sourcePoolToRefresh != null) {
+      await _updatePaymentStats(sourcePoolToRefresh);
+    }
     loadAll();
+  }
+
+  /// Validate and apply an amount change on [t], adjusting the pool, cash
+  /// entries and debt bookkeeping. All checks run against the stored state
+  /// before [t.amount] is mutated.
+  Future<void> _applyTransferAmountEdit(TransferModel t, double newAmount) async {
+    final payment = _paymentBox.get(t.paymentId);
+    if (payment == null) throw Exception('Payment not found');
+    final delta = newAmount - t.amount;
+
+    final bool isIncoming = t.parentTransferId == null && t.toCompanyId == null;
+    final bool isPoolBranch =
+        t.parentTransferId == null && t.toCompanyId != null;
+
+    if (isIncoming) {
+      if (t.id == payment.rootTransferId) {
+        throw Exception(
+          'This is the pool\'s original receipt — edit the pool amount instead',
+        );
+      }
+      // Pool-to-pool: the source pool must have room for the increase.
+      if (t.sourcePaymentId != null && delta > 0) {
+        final source = getPaymentById(t.sourcePaymentId!);
+        if (source != null) {
+          final spare = availableFromPool(source);
+          if (delta > spare + 0.0001) {
+            throw Exception(
+              'Pool ${source.code} only has ${spare.toStringAsFixed(2)} more available',
+            );
+          }
+        }
+      }
+      // This pool cannot shrink below what was already used from it.
+      final used = payment.amount - availableFromPool(payment);
+      if (payment.amount + delta < used - 0.0001) {
+        throw Exception(
+          'Pool ${payment.code} has already used ${used.toStringAsFixed(2)} — '
+          'amount too low',
+        );
+      }
+      // Company-funded records carry the debt owed to that company.
+      if (t.fromCompanyId != null) {
+        final cleared = clearedForTransfer(t.id);
+        if (cleared > newAmount + 0.0001) {
+          throw Exception(
+            '${cleared.toStringAsFixed(2)} of this debt was already cleared — '
+            'amount cannot go below that',
+          );
+        }
+        t.isDebt = true;
+        t.debtAmount = newAmount;
+      }
+      payment.amount += delta;
+      await _paymentBox.put(payment.id, payment);
+    } else if (isPoolBranch) {
+      // Raising the branch consumes pool funds; the pool must cover it.
+      if (delta > availableFromPool(payment) + 0.0001) {
+        throw Exception(
+          'Pool ${payment.code} only has '
+          '${availableFromPool(payment).toStringAsFixed(2)} available',
+        );
+      }
+    } else {
+      // Child branch: any amount is allowed, the excess over what the sender
+      // holds becomes debt.
+      double availableExcl;
+      if (t.sourceType == TransferSourceType.fromSpecific &&
+          t.specificParentTransferId != null) {
+        final slice = getTransferById(t.specificParentTransferId!);
+        availableExcl = (slice == null ? 0 : sliceRemaining(slice)) + t.amount;
+      } else {
+        availableExcl =
+            companyNodeBalance(t.paymentId, t.fromCompanyId) + t.amount;
+      }
+      final isDebt = newAmount > availableExcl + 0.0001;
+      final debtAmount = isDebt ? newAmount - availableExcl : 0.0;
+      final cleared = clearedForTransfer(t.id);
+      if (cleared > debtAmount + 0.0001) {
+        throw Exception(
+          '${cleared.toStringAsFixed(2)} of debt was already cleared on this '
+          'branch — remove those clearances first',
+        );
+      }
+      t.isDebt = isDebt;
+      t.debtAmount = debtAmount;
+    }
+
+    // The receiving company must keep enough to cover what it has already
+    // forwarded onward (combined and slice-locked alike).
+    if (t.toCompanyId != null) {
+      final nodeBalance = companyNodeBalance(t.paymentId, t.toCompanyId);
+      final sliceUsed = t.amount - sliceRemaining(t);
+      final minAllowed =
+          [t.amount - nodeBalance, sliceUsed].reduce((a, b) => a > b ? a : b);
+      if (newAmount < minAllowed - 0.0001) {
+        throw Exception(
+          'That money was already forwarded onward — amount cannot go below '
+          '${minAllowed.toStringAsFixed(2)}',
+        );
+      }
+    }
+
+    t.amount = newAmount;
+
+    // Cash entries created by this branch follow the new amount. Debt
+    // clearance deductions are separate settlements and must stay untouched.
+    final clearanceTxIds = _debtBox.values
+        .map((c) => c.cashTxId)
+        .whereType<String>()
+        .toSet();
+    final cashTxs = _cashBox.values
+        .where(
+          (tx) =>
+              tx.relatedTransferId == t.id && !clearanceTxIds.contains(tx.id),
+        )
+        .toList();
+    for (final tx in cashTxs) {
+      tx.amount = newAmount;
+      await _cashBox.put(tx.id, tx);
+    }
   }
 
   /// Delete a branch and every branch below it, removing any cash entries those
@@ -695,7 +1047,21 @@ class PaymentController extends GetxController {
     final paymentIds = <String>{};
     for (final id in toDelete) {
       final t = _transferBox.get(id);
-      if (t != null) paymentIds.add(t.paymentId);
+      if (t != null) {
+        paymentIds.add(t.paymentId);
+        // Money funded from another pool flows back there on delete.
+        if (t.sourcePaymentId != null) paymentIds.add(t.sourcePaymentId!);
+        // Incoming records (top-ups / pool-to-pool moves) grew the pool when
+        // they were created, so removing them shrinks it back. The original
+        // receipt record is excluded — the payment amount owns that portion.
+        if (t.parentTransferId == null && t.toCompanyId == null) {
+          final p = _paymentBox.get(t.paymentId);
+          if (p != null && t.id != p.rootTransferId) {
+            p.amount -= t.amount;
+            await _paymentBox.put(p.id, p);
+          }
+        }
+      }
       final cashIds = _cashBox.values
           .where((tx) => tx.relatedTransferId == id)
           .map((tx) => tx.id)
@@ -823,43 +1189,34 @@ class PaymentController extends GetxController {
       );
     }
 
-    if (source == DebtClearSource.pool) {
-      final pool = availableFromPool(payment);
-      if (amount > pool + 0.0001) {
-        throw Exception(
-          'Pool ${payment.code} only has ${pool.toStringAsFixed(2)} available',
-        );
-      }
-    } else if (source == DebtClearSource.cash) {
-      if (amount > cashInHand.value + 0.0001) {
-        throw Exception(
-          'Cash in hand is only ${cashInHand.value.toStringAsFixed(2)}',
-        );
-      }
+    // Debts are settled strictly from the pool they belong to.
+    if (source != DebtClearSource.pool) {
+      throw Exception('Debts can only be cleared from pool ${payment.code}');
+    }
+    final pool = availableFromPool(payment);
+    if (amount > pool + 0.0001) {
+      throw Exception(
+        'Pool ${payment.code} only has ${pool.toStringAsFixed(2)} available',
+      );
     }
 
     final when = date ?? DateTime.now();
-    String? cashTxId;
 
-    // Pool and cash settlements move money out of hand; a waive does not.
-    if (source == DebtClearSource.pool || source == DebtClearSource.cash) {
-      final label = source == DebtClearSource.pool
-          ? 'Debt cleared from pool ${payment.code} (${t.code})'
-          : 'Debt cleared from cash (${t.code})';
-      final cashTx = CashTransactionModel(
-        id: _uuid.v4(),
-        txType: CashTxType.deduct,
-        amount: amount,
-        description: label,
-        relatedPaymentId: t.paymentId,
-        relatedTransferId: transferId,
-        fromCompanyId: creditorId,
-        date: when,
-        createdAt: DateTime.now(),
-      );
-      await _cashBox.put(cashTx.id, cashTx);
-      cashTxId = cashTx.id;
-    }
+    // Pool money is part of cash in hand until it leaves, so settling the
+    // debt deducts it.
+    final cashTx = CashTransactionModel(
+      id: _uuid.v4(),
+      txType: CashTxType.deduct,
+      amount: amount,
+      description: 'Debt cleared from pool ${payment.code} (${t.code})',
+      relatedPaymentId: t.paymentId,
+      relatedTransferId: transferId,
+      fromCompanyId: creditorId,
+      date: when,
+      createdAt: DateTime.now(),
+    );
+    await _cashBox.put(cashTx.id, cashTx);
+    final String cashTxId = cashTx.id;
 
     final clearance = DebtClearanceModel(
       id: _uuid.v4(),
@@ -974,14 +1331,20 @@ class PaymentController extends GetxController {
   double get totalDebtOwedByMe {
     return companyOwedByMe.values.fold(0.0, (sum, v) => sum + v);
   }
-  /// Allocate cash in hand into a payment pool so it can be branched onward.
-  /// Funding only earmarks money you already hold — the actual cash leaves your
-  /// hand when you branch it out to a company, so it must not be deducted here
-  /// or the same money would be counted out twice. It is blocked when cash in
-  /// hand is less than the amount.
+  /// Add money to a payment pool.
+  ///
+  /// Sources (mutually exclusive):
+  /// - [sourcePaymentId] — move remaining balance from another pool. No cash
+  ///   changes hands; the source pool's balance goes down, this one's goes up,
+  ///   and both pools keep a record of the move.
+  /// - [fromCompanyId] — fresh cash received from that company. Cash in hand
+  ///   increases and the amount is registered as debt I owe the company.
+  /// - neither — free cash entry. Cash in hand increases.
   Future<TransferModel> receiveIntoPool({
     required String paymentId,
     required double amount,
+    String? fromCompanyId,
+    String? sourcePaymentId,
     String? note,
     String? label,
     DateTime? deadline,
@@ -989,38 +1352,74 @@ class PaymentController extends GetxController {
     final payment = getPaymentById(paymentId);
     if (payment == null) throw Exception('Payment not found');
     if (amount <= 0) throw Exception('Enter an amount greater than zero');
-    if (amount > cashInHand.value + 0.0001) {
-      throw Exception(
-        'Cash in hand is only ${cashInHand.value.toStringAsFixed(2)}',
-      );
+    if (fromCompanyId != null && sourcePaymentId != null) {
+      throw Exception('Pick a single source');
     }
 
-    // Earmark record: money set aside from cash in hand into this pool.
+    PaymentModel? sourcePool;
+    if (sourcePaymentId != null) {
+      if (sourcePaymentId == paymentId) {
+        throw Exception('A pool cannot fund itself');
+      }
+      sourcePool = getPaymentById(sourcePaymentId);
+      if (sourcePool == null) throw Exception('Source pool not found');
+      final available = availableFromPool(sourcePool);
+      if (amount > available + 0.0001) {
+        throw Exception(
+          'Pool ${sourcePool.code} only has ${available.toStringAsFixed(2)} available',
+        );
+      }
+    }
+
+    // Cash from a company is debt I owe them until settled, so the record
+    // carries the debt flag and can be cleared through the Clear Debt flow.
     final transfer = TransferModel(
       id: _uuid.v4(),
       paymentId: paymentId,
       parentTransferId: null, // Directly under payment pool
       amount: amount,
-      fromCompanyId: null, // ME / cash in hand
+      fromCompanyId: fromCompanyId,
       toCompanyId: null, // null = ME (the pool)
       sourceType: TransferSourceType.fromTotal,
       specificParentTransferId: null,
       note: note,
       createdAt: DateTime.now(),
-      isDebt: false,
-      debtAmount: 0,
+      isDebt: fromCompanyId != null,
+      debtAmount: fromCompanyId != null ? amount : 0,
       code: nextBranchCode(payment, null),
       label: label,
       deadline: deadline,
+      sourcePaymentId: sourcePaymentId,
     );
 
     await _transferBox.put(transfer.id, transfer);
 
-    // Grow the pool's available balance. Cash in hand is intentionally left
-    // unchanged; it is deducted when this money is branched out to a company.
+    // Fresh money (free entry or from a company) raises cash in hand.
+    // Pool-to-pool moves don't touch cash — the money never left my hand.
+    if (sourcePaymentId == null) {
+      final cashTx = CashTransactionModel(
+        id: _uuid.v4(),
+        txType: CashTxType.add,
+        amount: amount,
+        description: fromCompanyId == null
+            ? 'Cash added to pool ${payment.code} (${transfer.code})'
+            : 'Received into pool ${payment.code} (${transfer.code})',
+        relatedPaymentId: paymentId,
+        relatedTransferId: transfer.id,
+        fromCompanyId: fromCompanyId,
+        date: DateTime.now(),
+        createdAt: DateTime.now(),
+      );
+      await _cashBox.put(cashTx.id, cashTx);
+    }
+
+    // Grow the pool's balance.
     payment.amount += amount;
-    payment.remainingAmount += amount;
     await _paymentBox.put(payment.id, payment);
+    await _updatePaymentStats(paymentId);
+    if (sourcePool != null) {
+      await _updatePaymentStats(sourcePool.id);
+    }
 
     loadAll();
     return transfer;

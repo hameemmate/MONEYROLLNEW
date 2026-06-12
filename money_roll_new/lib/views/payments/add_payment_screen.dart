@@ -23,7 +23,7 @@ class _AddPaymentScreenState extends State<AddPaymentScreen> {
   final payCtrl = Get.find<PaymentController>();
   final compCtrl = Get.find<CompanyController>();
 
-  PaymentType _type = PaymentType.sent;
+  PaymentType _type = PaymentType.received;
   final _amountCtrl = TextEditingController();
   final _descCtrl = TextEditingController();
   final _noteCtrl = TextEditingController();
@@ -35,9 +35,13 @@ class _AddPaymentScreenState extends State<AddPaymentScreen> {
 
   bool get _isEdit => widget.existing != null;
 
-  /// Amount and company are locked when an existing payment already has
-  /// branches, so the tree and cash stay consistent.
-  bool _amountLocked = false;
+  /// The company is locked once the payment has real branches, so the debt
+  /// records in the tree stay consistent. The root receipt record does not
+  /// count as a branch.
+  bool _companyLocked = false;
+
+  /// The pool can never shrink below what was already used from it.
+  double _minAmount = 0;
 
   @override
   void initState() {
@@ -52,7 +56,11 @@ class _AddPaymentScreenState extends State<AddPaymentScreen> {
       _selectedCompanyId = e.companyId;
       _selectedDate = e.date;
       _deadline = e.deadline;
-      _amountLocked = payCtrl.getPaymentTransfers(e.id).isNotEmpty;
+      _companyLocked = payCtrl
+          .getPaymentTransfers(e.id)
+          .any((t) => t.id != e.rootTransferId);
+      final used = e.amount - payCtrl.availableFromPool(e);
+      _minAmount = used > 0 ? used : 0;
     }
   }
 
@@ -83,73 +91,33 @@ class _AddPaymentScreenState extends State<AddPaymentScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // Payment type selector
-              Container(
-                padding: const EdgeInsets.all(4),
-                decoration: BoxDecoration(
-                  color: AppColors.surface,
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: AppColors.border),
-                ),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: _typeBtn(
-                        PaymentType.sent,
-                        'Sent',
-                        Icons.arrow_upward,
-                        AppColors.red,
-                      ),
-                    ),
-                    Expanded(
-                      child: _typeBtn(
-                        PaymentType.received,
-                        'Received',
-                        Icons.arrow_downward,
-                        AppColors.green,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 20),
-
-              // Explanation card
+              // Explanation card. Payments are always "received" pools now —
+              // sending money is only possible by branching from a pool.
               Container(
                 padding: const EdgeInsets.all(12),
                 decoration: BoxDecoration(
-                  color: _type == PaymentType.sent
-                      ? AppColors.redBg
-                      : AppColors.greenBg,
+                  color: AppColors.greenBg,
                   borderRadius: BorderRadius.circular(10),
                   border: Border.all(
-                    color: _type == PaymentType.sent
-                        ? AppColors.red.withOpacity(0.3)
-                        : AppColors.green.withOpacity(0.3),
+                    color: AppColors.green.withOpacity(0.3),
                   ),
                 ),
                 child: Row(
                   children: [
-                    Icon(
-                      _type == PaymentType.sent
-                          ? Icons.info_outline
-                          : Icons.info_outline,
+                    const Icon(
+                      Icons.info_outline,
                       size: 16,
-                      color: _type == PaymentType.sent
-                          ? AppColors.red
-                          : AppColors.green,
+                      color: AppColors.green,
                     ),
                     const SizedBox(width: 8),
                     Expanded(
                       child: Text(
                         _type == PaymentType.sent
-                            ? 'Cash leaves your hand. Company receives and owes you.'
-                            : 'Cash comes to your hand from a company or free entry.',
+                            ? 'Legacy sent payment — cash left your hand when it was created.'
+                            : 'Creates a pool of received cash. Cash received from a company is debt you owe them. Send money onward by branching from the pool.',
                         style: TextStyle(
                           fontSize: 12,
-                          color: _type == PaymentType.sent
-                              ? AppColors.red.withOpacity(0.9)
-                              : AppColors.green.withOpacity(0.9),
+                          color: AppColors.green.withOpacity(0.9),
                         ),
                       ),
                     ),
@@ -163,7 +131,6 @@ class _AddPaymentScreenState extends State<AddPaymentScreen> {
               const SizedBox(height: 8),
               TextField(
                 controller: _amountCtrl,
-                readOnly: _amountLocked,
                 keyboardType: const TextInputType.numberWithOptions(
                   decimal: true,
                 ),
@@ -180,8 +147,8 @@ class _AddPaymentScreenState extends State<AddPaymentScreen> {
                     color: AppColors.gold,
                   ),
                   hintText: '0.00',
-                  helperText: _amountLocked
-                      ? 'Locked — this payment already has branches'
+                  helperText: _minAmount > 0
+                      ? 'Minimum ${AppUtils.formatAmount(_minAmount, showSymbol: false)} — already used from this pool'
                       : null,
                   helperStyle: const TextStyle(
                     fontSize: 11,
@@ -229,7 +196,7 @@ class _AddPaymentScreenState extends State<AddPaymentScreen> {
 
               // Company
               Text(
-                _type == PaymentType.sent ? 'Send To' : 'Receive From',
+                _type == PaymentType.sent ? 'Sent To' : 'Receive From',
                 style: _labelStyle(),
               ),
               const SizedBox(height: 8),
@@ -266,7 +233,7 @@ class _AddPaymentScreenState extends State<AddPaymentScreen> {
                       ),
                     ),
                   ],
-                  onChanged: _amountLocked
+                  onChanged: _companyLocked
                       ? null
                       : (val) => setState(() => _selectedCompanyId = val),
                 ),
@@ -391,52 +358,13 @@ class _AddPaymentScreenState extends State<AddPaymentScreen> {
                         child: CircularProgressIndicator(color: AppColors.gold),
                       )
                     : GoldButton(
-                        label: _isEdit
-                            ? 'Save Changes'
-                            : (_type == PaymentType.sent
-                                  ? 'Create Sent Payment'
-                                  : 'Create Received Payment'),
-                        icon: _isEdit
-                            ? Icons.check
-                            : (_type == PaymentType.sent
-                                  ? Icons.arrow_upward
-                                  : Icons.arrow_downward),
+                        label: _isEdit ? 'Save Changes' : 'Create Payment Pool',
+                        icon: _isEdit ? Icons.check : Icons.arrow_downward,
                         onTap: _submit,
                       ),
               ),
             ],
           ),
-        ),
-      ),
-    );
-  }
-
-  Widget _typeBtn(PaymentType type, String label, IconData icon, Color color) {
-    final selected = _type == type;
-    return GestureDetector(
-      onTap: _isEdit ? null : () => setState(() => _type = type),
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 200),
-        padding: const EdgeInsets.symmetric(vertical: 12),
-        decoration: BoxDecoration(
-          color: selected ? color.withOpacity(0.15) : Colors.transparent,
-          borderRadius: BorderRadius.circular(8),
-          border: selected ? Border.all(color: color.withOpacity(0.5)) : null,
-        ),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(icon, size: 16, color: selected ? color : AppColors.textMuted),
-            const SizedBox(width: 6),
-            Text(
-              label,
-              style: GoogleFonts.spaceGrotesk(
-                fontSize: 14,
-                fontWeight: FontWeight.w600,
-                color: selected ? color : AppColors.textMuted,
-              ),
-            ),
-          ],
         ),
       ),
     );
@@ -500,8 +428,11 @@ class _AddPaymentScreenState extends State<AddPaymentScreen> {
       AppUtils.showError('Error', 'Enter description');
       return;
     }
-    if (_type == PaymentType.sent && _selectedCompanyId == null) {
-      AppUtils.showError('Error', 'Select a company to send to');
+    if (_isEdit && amt < _minAmount - 0.0001) {
+      AppUtils.showError(
+        'Error',
+        'Amount cannot go below ${AppUtils.formatAmount(_minAmount)} — already used from this pool',
+      );
       return;
     }
 
@@ -515,7 +446,7 @@ class _AddPaymentScreenState extends State<AddPaymentScreen> {
           note: _noteCtrl.text.trim(),
           date: _selectedDate,
           deadline: _deadline,
-          amount: _amountLocked ? null : amt,
+          amount: amt,
           companyId: _selectedCompanyId,
         );
         Get.back();
