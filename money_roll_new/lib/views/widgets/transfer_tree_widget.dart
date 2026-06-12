@@ -43,7 +43,6 @@ class _TransferTreeWidgetState extends State<TransferTreeWidget> {
       );
     }
 
-    // Exclude the root receipt from first‑level transfers
     final firstLevel =
         payCtrl
             .getPaymentTransfers(widget.paymentId)
@@ -926,6 +925,61 @@ class _TransferNodeState extends State<_TransferNode> {
   bool _expanded = true;
   bool _hovered = false;
 
+  DebtClearanceModel? _lastClearance(
+    TransferModel t,
+    PaymentController payCtrl,
+  ) {
+    final clearances = payCtrl.clearancesForTransfer(t.id);
+    return clearances.isNotEmpty ? clearances.last : null;
+  }
+
+  Future<void> _undoLastClearance(
+    BuildContext context,
+    TransferModel t,
+    PaymentController payCtrl,
+  ) async {
+    final last = _lastClearance(t, payCtrl);
+    if (last == null) return;
+
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppColors.surface,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+        title: Text(
+          'Undo clearance?',
+          style: GoogleFonts.spaceGrotesk(
+            fontWeight: FontWeight.w600,
+            color: AppColors.textPrimary,
+          ),
+        ),
+        content: Text(
+          'This will restore ${AppUtils.formatAmount(last.amount)} of debt on ${t.code} '
+          'and add the cash back to the pool. This cannot be undone.',
+          style: const TextStyle(color: AppColors.textSecondary, fontSize: 13),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text(
+              'Cancel',
+              style: TextStyle(color: AppColors.textSecondary),
+            ),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('Undo', style: TextStyle(color: AppColors.red)),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm == true) {
+      await payCtrl.deleteDebtClearance(last.id);
+      AppUtils.showSuccess('Undone', 'Debt clearance reversed');
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final payCtrl = Get.find<PaymentController>();
@@ -1281,12 +1335,34 @@ class _TransferNodeState extends State<_TransferNode> {
                       ),
                     if (t.isDebt) ...[
                       if (payCtrl.isDebtFullyCleared(t))
-                        _badge(
-                          payCtrl.debtClearedDate(t.id) != null
-                              ? 'Cleared ${AppUtils.formatDateShort(payCtrl.debtClearedDate(t.id)!)}'
-                              : 'Cleared',
-                          AppColors.green,
-                          AppColors.greenBg,
+                        Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            _badge(
+                              payCtrl.debtClearedDate(t.id) != null
+                                  ? 'Cleared ${AppUtils.formatDateShort(payCtrl.debtClearedDate(t.id)!)}'
+                                  : 'Cleared',
+                              AppColors.green,
+                              AppColors.greenBg,
+                            ),
+                            const SizedBox(width: 4),
+                            GestureDetector(
+                              onTap: () =>
+                                  _undoLastClearance(context, t, payCtrl),
+                              child: Container(
+                                padding: const EdgeInsets.all(2),
+                                decoration: BoxDecoration(
+                                  color: AppColors.redBg,
+                                  borderRadius: BorderRadius.circular(4),
+                                ),
+                                child: const Icon(
+                                  Icons.undo,
+                                  size: 12,
+                                  color: AppColors.red,
+                                ),
+                              ),
+                            ),
+                          ],
                         )
                       else ...[
                         GestureDetector(
@@ -1298,10 +1374,32 @@ class _TransferNodeState extends State<_TransferNode> {
                           ),
                         ),
                         if (payCtrl.clearedForTransfer(t.id) > 0.0001)
-                          _badge(
-                            'Cleared ${AppUtils.formatAmount(payCtrl.clearedForTransfer(t.id))}',
-                            AppColors.green,
-                            AppColors.greenBg,
+                          Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              _badge(
+                                'Cleared ${AppUtils.formatAmount(payCtrl.clearedForTransfer(t.id))}',
+                                AppColors.green,
+                                AppColors.greenBg,
+                              ),
+                              const SizedBox(width: 4),
+                              GestureDetector(
+                                onTap: () =>
+                                    _undoLastClearance(context, t, payCtrl),
+                                child: Container(
+                                  padding: const EdgeInsets.all(2),
+                                  decoration: BoxDecoration(
+                                    color: AppColors.redBg,
+                                    borderRadius: BorderRadius.circular(4),
+                                  ),
+                                  child: const Icon(
+                                    Icons.undo,
+                                    size: 12,
+                                    color: AppColors.red,
+                                  ),
+                                ),
+                              ),
+                            ],
                           ),
                       ],
                     ],
