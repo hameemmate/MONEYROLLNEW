@@ -12,6 +12,53 @@ import '../../utils/app_utils.dart';
 import '../payments/payment_detail_screen.dart';
 import 'common_widgets.dart';
 
+// ==================== HELPER FUNCTION FOR UNDO ====================
+Future<void> undoLastClearanceForTransfer(
+  BuildContext context,
+  String transferId,
+  PaymentController payCtrl,
+) async {
+  final clearances = payCtrl.clearancesForTransfer(transferId);
+  if (clearances.isEmpty) return;
+  final last = clearances.last;
+  final confirm = await showDialog<bool>(
+    context: context,
+    builder: (ctx) => AlertDialog(
+      backgroundColor: AppColors.surface,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+      title: Text(
+        'Undo clearance?',
+        style: GoogleFonts.spaceGrotesk(
+          fontWeight: FontWeight.w600,
+          color: AppColors.textPrimary,
+        ),
+      ),
+      content: Text(
+        'This will restore ${AppUtils.formatAmount(last.amount)} of debt '
+        'and add the cash back to the pool. This cannot be undone.',
+        style: const TextStyle(color: AppColors.textSecondary, fontSize: 13),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(ctx).pop(false),
+          child: const Text(
+            'Cancel',
+            style: TextStyle(color: AppColors.textSecondary),
+          ),
+        ),
+        TextButton(
+          onPressed: () => Navigator.of(ctx).pop(true),
+          child: const Text('Undo', style: TextStyle(color: AppColors.red)),
+        ),
+      ],
+    ),
+  );
+  if (confirm == true) {
+    await payCtrl.deleteDebtClearance(last.id);
+    AppUtils.showSuccess('Undone', 'Debt clearance reversed');
+  }
+}
+
 class TransferTreeWidget extends StatefulWidget {
   final String paymentId;
   final bool allowAddTransfer;
@@ -194,6 +241,18 @@ class _PoolCard extends StatelessWidget {
 
   const _PoolCard({required this.payment, required this.allowAdd});
 
+  Widget _badge(String label, Color fg, Color bg) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+    decoration: BoxDecoration(
+      color: bg,
+      borderRadius: BorderRadius.circular(4),
+    ),
+    child: Text(
+      label,
+      style: TextStyle(fontSize: 10, color: fg, fontWeight: FontWeight.w600),
+    ),
+  );
+
   @override
   Widget build(BuildContext context) {
     final payCtrl = Get.find<PaymentController>();
@@ -207,9 +266,15 @@ class _PoolCard extends StatelessWidget {
     final Color accent = debtPool ? AppColors.debtRed : AppColors.gold;
 
     double receiptDebt = 0;
+    double clearedAmount = 0;
+    String? rootTransferId;
     if (debtPool && payment.rootTransferId != null) {
-      final root = payCtrl.getTransferById(payment.rootTransferId!);
-      if (root != null) receiptDebt = payCtrl.remainingDebtForTransfer(root);
+      rootTransferId = payment.rootTransferId;
+      final root = payCtrl.getTransferById(rootTransferId!);
+      if (root != null) {
+        receiptDebt = payCtrl.remainingDebtForTransfer(root);
+        clearedAmount = payCtrl.clearedForTransfer(root.id);
+      }
     }
 
     return Container(
@@ -271,6 +336,42 @@ class _PoolCard extends StatelessWidget {
             Text(
               'Debt to $source: ${AppUtils.formatAmount(receiptDebt)} outstanding',
               style: const TextStyle(fontSize: 11, color: AppColors.debtRed),
+            ),
+          ],
+          if (clearedAmount > 0.0001) ...[
+            const SizedBox(height: 4),
+            Row(
+              children: [
+                _badge(
+                  'Cleared ${AppUtils.formatAmount(clearedAmount)}',
+                  AppColors.green,
+                  AppColors.greenBg,
+                ),
+                const SizedBox(width: 4),
+                GestureDetector(
+                  onTap: () async {
+                    if (rootTransferId != null) {
+                      await undoLastClearanceForTransfer(
+                        context,
+                        rootTransferId!,
+                        payCtrl,
+                      );
+                    }
+                  },
+                  child: Container(
+                    padding: const EdgeInsets.all(2),
+                    decoration: BoxDecoration(
+                      color: AppColors.redBg,
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                    child: const Icon(
+                      Icons.undo,
+                      size: 12,
+                      color: AppColors.red,
+                    ),
+                  ),
+                ),
+              ],
             ),
           ],
           const SizedBox(height: 6),
@@ -925,61 +1026,6 @@ class _TransferNodeState extends State<_TransferNode> {
   bool _expanded = true;
   bool _hovered = false;
 
-  DebtClearanceModel? _lastClearance(
-    TransferModel t,
-    PaymentController payCtrl,
-  ) {
-    final clearances = payCtrl.clearancesForTransfer(t.id);
-    return clearances.isNotEmpty ? clearances.last : null;
-  }
-
-  Future<void> _undoLastClearance(
-    BuildContext context,
-    TransferModel t,
-    PaymentController payCtrl,
-  ) async {
-    final last = _lastClearance(t, payCtrl);
-    if (last == null) return;
-
-    final confirm = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: AppColors.surface,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-        title: Text(
-          'Undo clearance?',
-          style: GoogleFonts.spaceGrotesk(
-            fontWeight: FontWeight.w600,
-            color: AppColors.textPrimary,
-          ),
-        ),
-        content: Text(
-          'This will restore ${AppUtils.formatAmount(last.amount)} of debt on ${t.code} '
-          'and add the cash back to the pool. This cannot be undone.',
-          style: const TextStyle(color: AppColors.textSecondary, fontSize: 13),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(false),
-            child: const Text(
-              'Cancel',
-              style: TextStyle(color: AppColors.textSecondary),
-            ),
-          ),
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(true),
-            child: const Text('Undo', style: TextStyle(color: AppColors.red)),
-          ),
-        ],
-      ),
-    );
-
-    if (confirm == true) {
-      await payCtrl.deleteDebtClearance(last.id);
-      AppUtils.showSuccess('Undone', 'Debt clearance reversed');
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     final payCtrl = Get.find<PaymentController>();
@@ -1347,8 +1393,11 @@ class _TransferNodeState extends State<_TransferNode> {
                             ),
                             const SizedBox(width: 4),
                             GestureDetector(
-                              onTap: () =>
-                                  _undoLastClearance(context, t, payCtrl),
+                              onTap: () => undoLastClearanceForTransfer(
+                                context,
+                                t.id,
+                                payCtrl,
+                              ),
                               child: Container(
                                 padding: const EdgeInsets.all(2),
                                 decoration: BoxDecoration(
@@ -1384,8 +1433,11 @@ class _TransferNodeState extends State<_TransferNode> {
                               ),
                               const SizedBox(width: 4),
                               GestureDetector(
-                                onTap: () =>
-                                    _undoLastClearance(context, t, payCtrl),
+                                onTap: () => undoLastClearanceForTransfer(
+                                  context,
+                                  t.id,
+                                  payCtrl,
+                                ),
                                 child: Container(
                                   padding: const EdgeInsets.all(2),
                                   decoration: BoxDecoration(
