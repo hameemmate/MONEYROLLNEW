@@ -17,6 +17,7 @@ import '../../models/debt_clearance_model.dart';
 import '../../models/enums.dart';
 import '../../utils/app_constants.dart';
 import '../../utils/app_utils.dart';
+import '../reports/reports_screen.dart';
 import '../widgets/common_widgets.dart';
 
 class SettingsScreen extends StatelessWidget {
@@ -84,6 +85,16 @@ class SettingsScreen extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 20),
+
+            _sectionLabel('Reports'),
+            _settingsTile(
+              icon: Icons.assessment_outlined,
+              label: 'Pool Reports',
+              subtitle: 'View all pools and export PDFs',
+              iconColor: AppColors.gold,
+              onTap: () => Get.to(() => const ReportsScreen()),
+            ),
+            const SizedBox(height: 16),
 
             _sectionLabel('Data'),
             _settingsTile(
@@ -612,17 +623,17 @@ class SettingsScreen extends StatelessWidget {
     PaymentController payCtrl,
     CompanyController compCtrl,
   ) async {
-    final companies = _asList(data['companies'])
-        .map(_companyFromJson)
-        .toList();
+    final companies = _asList(data['companies']).map(_companyFromJson).toList();
     final payments = _asList(data['payments']).map(_paymentFromJson).toList();
-    final transfers = _asList(data['transfers']).map(_transferFromJson).toList();
-    final cashTransactions = _asList(data['cashTransactions'])
-        .map(_cashTxFromJson)
-        .toList();
-    final debtClearances = _asList(data['debtClearances'])
-        .map(_debtClearanceFromJson)
-        .toList();
+    final transfers = _asList(
+      data['transfers'],
+    ).map(_transferFromJson).toList();
+    final cashTransactions = _asList(
+      data['cashTransactions'],
+    ).map(_cashTxFromJson).toList();
+    final debtClearances = _asList(
+      data['debtClearances'],
+    ).map(_debtClearanceFromJson).toList();
 
     await compCtrl.importCompanies(companies);
     await payCtrl.importData(
@@ -637,7 +648,10 @@ class SettingsScreen extends StatelessWidget {
 
   List<Map<String, dynamic>> _asList(dynamic value) {
     if (value is! List) return const [];
-    return value.whereType<Map>().map((e) => e.cast<String, dynamic>()).toList();
+    return value
+        .whereType<Map>()
+        .map((e) => e.cast<String, dynamic>())
+        .toList();
   }
 
   double _toDouble(dynamic value) =>
@@ -697,8 +711,8 @@ class SettingsScreen extends StatelessWidget {
       specificParentTransferId: json['specificParentTransferId'] as String?,
       note: json['note'] as String?,
       // Older backups used 'date' for the transfer timestamp.
-      createdAt: _toDate(json['createdAt']) ?? _toDate(json['date']) ??
-          DateTime.now(),
+      createdAt:
+          _toDate(json['createdAt']) ?? _toDate(json['date']) ?? DateTime.now(),
       isDebt: (json['isDebt'] as bool?) ?? false,
       debtAmount: _toDouble(json['debtAmount']),
       code: (json['code'] as String?) ?? '',

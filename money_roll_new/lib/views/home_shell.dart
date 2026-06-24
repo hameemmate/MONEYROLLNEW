@@ -12,14 +12,6 @@ import '../../utils/app_constants.dart';
 class HomeShell extends StatelessWidget {
   const HomeShell({super.key});
 
-  static const _screens = [
-    DashboardScreen(),
-    PaymentsScreen(),
-    SizedBox(), // FAB placeholder
-    CompaniesScreen(),
-    SettingsScreen(),
-  ];
-
   @override
   Widget build(BuildContext context) {
     final dashCtrl = Get.find<DashboardController>();
@@ -29,7 +21,7 @@ class HomeShell extends StatelessWidget {
       return Scaffold(
         backgroundColor: AppColors.bg,
         body: IndexedStack(
-          index: tab > 2 ? tab - 1 : tab,
+          index: tab,
           children: const [
             DashboardScreen(),
             PaymentsScreen(),
@@ -39,7 +31,7 @@ class HomeShell extends StatelessWidget {
         ),
         floatingActionButton: tab == 0 || tab == 1
             ? FloatingActionButton(
-                heroTag: "home_fab_${tab}", // Unique tag
+                heroTag: 'home_fab_$tab',
                 onPressed: () => Get.to(() => const AddPaymentScreen()),
                 backgroundColor: AppColors.gold,
                 foregroundColor: AppColors.onGold,
@@ -60,40 +52,15 @@ class HomeShell extends StatelessWidget {
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.spaceAround,
                 children: [
-                  _navItem(
-                    context,
-                    0,
-                    Icons.dashboard_outlined,
-                    Icons.dashboard,
-                    'Home',
-                    dashCtrl,
-                  ),
-                  _navItem(
-                    context,
-                    1,
-                    Icons.receipt_long_outlined,
-                    Icons.receipt_long,
-                    'Payments',
-                    dashCtrl,
-                  ),
-                  // Center FAB space
+                  _navItem(context, 0, Icons.dashboard_outlined,
+                      Icons.dashboard, 'Home', dashCtrl),
+                  _navItem(context, 1, Icons.receipt_long_outlined,
+                      Icons.receipt_long, 'Payments', dashCtrl),
                   const SizedBox(width: 60),
-                  _navItem(
-                    context,
-                    3,
-                    Icons.business_outlined,
-                    Icons.business,
-                    'Companies',
-                    dashCtrl,
-                  ),
-                  _navItem(
-                    context,
-                    4,
-                    Icons.settings_outlined,
-                    Icons.settings,
-                    'Settings',
-                    dashCtrl,
-                  ),
+                  _navItem(context, 2, Icons.business_outlined,
+                      Icons.business, 'Companies', dashCtrl),
+                  _navItem(context, 3, Icons.settings_outlined,
+                      Icons.settings, 'Settings', dashCtrl),
                 ],
               ),
             ),

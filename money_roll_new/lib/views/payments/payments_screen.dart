@@ -33,11 +33,15 @@ class _PaymentsScreenState extends State<PaymentsScreen> {
       if (_filterCompanyId != null && p.companyId != _filterCompanyId)
         return false;
       if (_searchQuery.isNotEmpty) {
-        final q = _searchQuery.toLowerCase();
+        final q = _searchQuery.toLowerCase().trim();
         final compName = p.companyId != null
             ? (compCtrl.getById(p.companyId!)?.name ?? '').toLowerCase()
             : '';
-        return p.description.toLowerCase().contains(q) || compName.contains(q);
+        final amountStr = p.amount.toStringAsFixed(0);
+        return p.description.toLowerCase().contains(q) ||
+            compName.contains(q) ||
+            p.code.toLowerCase().contains(q) ||
+            amountStr.contains(q);
       }
       return true;
     }).toList();
