@@ -155,37 +155,27 @@ class PaymentController extends GetxController {
   }
 
   double availableFromPool(PaymentModel payment) {
-    if (payment.type == PaymentType.received && payment.companyId != null) {
-      // Debt pool: available = total debt - total already sent to companies (ME → company branches)
-      final sentToCompanies = _transferBox.values
-          .where(
-            (t) =>
-                t.paymentId == payment.id &&
-                t.parentTransferId == null &&
-                t.fromCompanyId == null &&
-                t.toCompanyId != null,
-          )
-          .fold(0.0, (s, t) => s + t.amount);
-      return payment.amount - sentToCompanies;
-    }
-    // Normal pool
-    final used = _transferBox.values
+    // Root-level ME→Company branches consume pool funds.
+    final sentToCompanies = _transferBox.values
         .where(
           (t) =>
               t.paymentId == payment.id &&
               t.parentTransferId == null &&
+              t.fromCompanyId == null &&
               t.toCompanyId != null,
         )
         .fold(0.0, (s, t) => s + t.amount);
+    // Money moved out to another pool.
     final movedToOtherPools = _transferBox.values
         .where((t) => t.sourcePaymentId == payment.id)
         .fold(0.0, (s, t) => s + t.amount);
+    // Debt cleared directly from pool funds.
     final clearedFromPool = _debtBox.values
         .where(
           (c) => c.paymentId == payment.id && c.source == DebtClearSource.pool,
         )
         .fold(0.0, (s, c) => s + c.amount);
-    return payment.amount - used - movedToOtherPools - clearedFromPool;
+    return payment.amount - sentToCompanies - movedToOtherPools - clearedFromPool;
   }
 
   List<TransferModel> poolFundingsInto(String paymentId) {
@@ -408,37 +398,47 @@ class PaymentController extends GetxController {
         .where((t) => t.paymentId == paymentId)
         .toList();
 
-    if (payment.type == PaymentType.received && payment.companyId != null) {
-      // Debt pool: remainingAmount is the amount still available to branch
-      // (total debt minus what has been sent to other companies)
-      final sentToCompanies = allTransfers
-          .where(
-            (t) =>
-                t.parentTransferId == null &&
-                t.fromCompanyId == null &&
-                t.toCompanyId != null,
-          )
-          .fold(0.0, (s, t) => s + t.amount);
-      payment.remainingAmount = payment.amount - sentToCompanies;
-    } else {
-      final fromPool = allTransfers
-          .where((t) => t.parentTransferId == null && t.toCompanyId != null)
-          .fold(0.0, (sum, t) => sum + t.amount);
-      final movedToOtherPools = _transferBox.values
-          .where((t) => t.sourcePaymentId == paymentId)
-          .fold(0.0, (s, t) => s + t.amount);
-      final clearedFromPool = _debtBox.values
-          .where(
-            (c) => c.paymentId == paymentId && c.source == DebtClearSource.pool,
-          )
-          .fold(0.0, (s, c) => s + c.amount);
-      payment.remainingAmount =
-          payment.amount - fromPool - movedToOtherPools - clearedFromPool;
-    }
+    // Common deductions for all pool types.
+    final sentToCompanies = allTransfers
+        .where(
+          (t) =>
+              t.parentTransferId == null &&
+              t.fromCompanyId == null &&
+              t.toCompanyId != null,
+        )
+        .fold(0.0, (s, t) => s + t.amount);
+    final movedToOtherPools = _transferBox.values
+        .where((t) => t.sourcePaymentId == paymentId)
+        .fold(0.0, (s, t) => s + t.amount);
+    final clearedFromPool = _debtBox.values
+        .where(
+          (c) => c.paymentId == paymentId && c.source == DebtClearSource.pool,
+        )
+        .fold(0.0, (s, c) => s + c.amount);
 
-    final totalDebt = allTransfers
-        .where((t) => t.isDebt)
-        .fold(0.0, (sum, t) => sum + remainingDebtForTransfer(t));
+    // Same formula for both debt pools and regular pools.
+    payment.remainingAmount =
+        payment.amount - sentToCompanies - movedToOtherPools - clearedFromPool;
+
+    double totalDebt = 0;
+    for (final t in allTransfers.where((t) => t.isDebt)) {
+      var remaining = remainingDebtForTransfer(t);
+      // Root receipt transfer (company→ME): root-level branches that send
+      // money back to that same company are implicit debt repayments.
+      if (remaining > 0 &&
+          t.parentTransferId == null &&
+          t.fromCompanyId != null &&
+          t.toCompanyId == null) {
+        final sentBackToCreditor = allTransfers
+            .where((b) =>
+                b.parentTransferId == null &&
+                b.fromCompanyId == null &&
+                b.toCompanyId == t.fromCompanyId)
+            .fold(0.0, (s, b) => s + b.amount);
+        remaining = (remaining - sentBackToCreditor).clamp(0.0, double.infinity);
+      }
+      totalDebt += remaining;
+    }
     payment.totalDebt = totalDebt;
     await _paymentBox.put(paymentId, payment);
   }
@@ -1019,8 +1019,29 @@ class PaymentController extends GetxController {
     return remaining > 0 ? remaining : 0;
   }
 
+  /// Like [remainingDebtForTransfer] but for a root receipt transfer
+  /// (company → ME), subtracts any root-level branches that send money
+  /// back to the same creditor — those count as implicit repayments.
+  double effectiveReceiptDebt(TransferModel t) {
+    final base = remainingDebtForTransfer(t);
+    if (base <= 0 ||
+        t.parentTransferId != null ||
+        t.fromCompanyId == null ||
+        t.toCompanyId != null) {
+      return base;
+    }
+    final sentBack = _transferBox.values
+        .where((b) =>
+            b.paymentId == t.paymentId &&
+            b.parentTransferId == null &&
+            b.fromCompanyId == null &&
+            b.toCompanyId == t.fromCompanyId)
+        .fold(0.0, (s, b) => s + b.amount);
+    return (base - sentBack).clamp(0.0, double.infinity);
+  }
+
   bool isDebtFullyCleared(TransferModel t) {
-    return t.isDebt && remainingDebtForTransfer(t) <= 0.0001;
+    return t.isDebt && effectiveReceiptDebt(t) <= 0.0001;
   }
 
   DateTime? debtClearedDate(String transferId) {
@@ -1032,7 +1053,7 @@ class PaymentController extends GetxController {
   List<TransferModel> outstandingDebtTransfers(String paymentId) {
     return _transferBox.values
         .where((t) => t.paymentId == paymentId && t.isDebt)
-        .where((t) => remainingDebtForTransfer(t) > 0.0001)
+        .where((t) => effectiveReceiptDebt(t) > 0.0001)
         .toList()
       ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
   }

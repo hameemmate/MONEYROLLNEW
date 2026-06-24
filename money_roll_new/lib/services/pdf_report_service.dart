@@ -704,7 +704,7 @@ class PdfReportService {
                   final row = e.value;
                   final t = row.transfer;
 
-                  final remaining = payCtrl.remainingDebtForTransfer(t);
+                  final remaining = payCtrl.effectiveReceiptDebt(t);
                   final cleared = payCtrl.clearedForTransfer(t.id);
                   String debtText;
                   String statusText;

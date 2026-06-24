@@ -189,10 +189,48 @@ class _OutgoingPoolMoveCard extends StatelessWidget {
             onSelected: (v) {
               if (v == 'open' && target != null) {
                 Get.to(() => PaymentDetailScreen(paymentId: target.id));
-              } else if (v == 'edit') {
-                showEditBranchSheet(context, transfer);
-              } else if (v == 'delete') {
-                confirmDeleteBranch(context, transfer);
+              } else if (v == 'delete_info') {
+                showDialog(
+                  context: context,
+                  builder: (ctx) => AlertDialog(
+                    backgroundColor: AppColors.surface,
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14)),
+                    title: Text(
+                      'Delete from $targetCode',
+                      style: GoogleFonts.spaceGrotesk(
+                          fontWeight: FontWeight.w600,
+                          color: AppColors.textPrimary,
+                          fontSize: 15),
+                    ),
+                    content: Text(
+                      'This funding is managed from pool $targetCode.\n\n'
+                      'Open $targetCode, find this incoming entry, and delete it from there. '
+                      'That will return the funds to this pool automatically.',
+                      style: const TextStyle(
+                          color: AppColors.textSecondary, fontSize: 13),
+                    ),
+                    actions: [
+                      if (target != null)
+                        TextButton(
+                          onPressed: () {
+                            Navigator.of(ctx).pop();
+                            Get.to(() =>
+                                PaymentDetailScreen(paymentId: target.id));
+                          },
+                          child: Text('Open $targetCode',
+                              style:
+                                  const TextStyle(color: AppColors.gold)),
+                        ),
+                      TextButton(
+                        onPressed: () => Navigator.of(ctx).pop(),
+                        child: const Text('OK',
+                            style:
+                                TextStyle(color: AppColors.textSecondary)),
+                      ),
+                    ],
+                  ),
+                );
               }
             },
             itemBuilder: (_) => [
@@ -208,22 +246,12 @@ class _OutgoingPoolMoveCard extends StatelessWidget {
                   ),
                 ),
               const PopupMenuItem(
-                value: 'edit',
+                value: 'delete_info',
                 child: Row(
                   children: [
-                    Icon(Icons.edit_outlined, size: 16),
+                    Icon(Icons.info_outline, size: 16),
                     SizedBox(width: 8),
-                    Text('Edit Amount'),
-                  ],
-                ),
-              ),
-              const PopupMenuItem(
-                value: 'delete',
-                child: Row(
-                  children: [
-                    Icon(Icons.delete_outline, size: 16),
-                    SizedBox(width: 8),
-                    Text('Delete (return money)'),
+                    Text('How to Delete'),
                   ],
                 ),
               ),
@@ -272,7 +300,7 @@ class _PoolCard extends StatelessWidget {
       rootTransferId = payment.rootTransferId;
       final root = payCtrl.getTransferById(rootTransferId!);
       if (root != null) {
-        receiptDebt = payCtrl.remainingDebtForTransfer(root);
+        receiptDebt = payCtrl.effectiveReceiptDebt(root);
         clearedAmount = payCtrl.clearedForTransfer(root.id);
       }
     }
@@ -384,37 +412,59 @@ class _PoolCard extends StatelessWidget {
           ),
           if (allowAdd) ...[
             const SizedBox(height: 10),
-            if (available <= 0 && !debtPool)
-              Container(
-                margin: const EdgeInsets.only(bottom: 8),
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 10,
-                  vertical: 6,
-                ),
-                decoration: BoxDecoration(
-                  color: AppColors.redBg,
-                  borderRadius: BorderRadius.circular(6),
-                ),
-                child: Row(
-                  children: [
-                    const Icon(
-                      Icons.warning_amber_rounded,
-                      size: 14,
-                      color: AppColors.red,
-                    ),
-                    const SizedBox(width: 6),
-                    Expanded(
-                      child: Text(
-                        'No funds available. Add money to the pool first.',
-                        style: const TextStyle(
-                          fontSize: 11,
-                          color: AppColors.red,
+            if (available <= 0) ...[
+              Builder(builder: (ctx) {
+                // Explain WHY there's nothing left to branch.
+                final outgoing = payCtrl.poolFundingsOutOf(payment.id);
+                final movedTotal = outgoing.fold(0.0, (s, t) => s + t.amount);
+                String msg;
+                if (outgoing.isNotEmpty && movedTotal >= payment.amount - 0.0001) {
+                  final targets = outgoing
+                      .map((t) {
+                        final target = payCtrl.getPaymentById(t.paymentId);
+                        return target?.code ?? '?';
+                      })
+                      .toSet()
+                      .join(', ');
+                  msg = 'All funds moved to pool $targets. '
+                      'No remaining balance to branch from here.';
+                } else if (debtPool && receiptDebt <= 0.0001) {
+                  msg = 'Debt fully cleared. Nothing left to branch.';
+                } else {
+                  msg = 'No funds available to branch. Add money to continue.';
+                }
+                return Container(
+                  margin: const EdgeInsets.only(bottom: 8),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 6,
+                  ),
+                  decoration: BoxDecoration(
+                    color: AppColors.redBg,
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(
+                        Icons.info_outline,
+                        size: 14,
+                        color: AppColors.red,
+                      ),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Text(
+                          msg,
+                          style: const TextStyle(
+                            fontSize: 11,
+                            color: AppColors.red,
+                          ),
                         ),
                       ),
-                    ),
-                  ],
-                ),
-              ),
+                    ],
+                  ),
+                );
+              }),
+            ],
             Row(
               children: [
                 if (available > 0)
@@ -787,7 +837,10 @@ class _PoolCard extends StatelessWidget {
                             p,
                             payCtrl,
                             selectedPoolId,
-                            setModalState,
+                            () => setModalState(() {
+                              selectedPoolId = p.id;
+                              amountCtrl.clear();
+                            }),
                           ),
                         ),
                       ],
@@ -806,7 +859,10 @@ class _PoolCard extends StatelessWidget {
                             p,
                             payCtrl,
                             selectedPoolId,
-                            setModalState,
+                            () => setModalState(() {
+                              selectedPoolId = p.id;
+                              amountCtrl.clear();
+                            }),
                           ),
                         ),
                       ],
@@ -824,13 +880,45 @@ class _PoolCard extends StatelessWidget {
                         helperText: source == _PoolFundSource.pool
                             ? (selectedPool == null
                                   ? 'Select a source pool first'
-                                  : 'Max ${AppUtils.formatAmount(poolMax, showSymbol: false)} from pool ${selectedPool.code}')
+                                  : 'Available: ${AppUtils.formatAmount(poolMax)} from ${selectedPool.code}')
+                            : null,
+                        helperStyle: const TextStyle(
+                          color: AppColors.textMuted,
+                          fontSize: 11,
+                        ),
+                        suffixIcon: source == _PoolFundSource.pool &&
+                                selectedPool != null &&
+                                poolMax > 0
+                            ? GestureDetector(
+                                onTap: () => setModalState(() {
+                                  amountCtrl.text =
+                                      poolMax.toStringAsFixed(2);
+                                  amountCtrl.selection =
+                                      TextSelection.fromPosition(
+                                    TextPosition(
+                                        offset: amountCtrl.text.length),
+                                  );
+                                }),
+                                child: const Padding(
+                                  padding: EdgeInsets.symmetric(
+                                      horizontal: 10, vertical: 12),
+                                  child: Text(
+                                    'MAX',
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.w700,
+                                      color: AppColors.gold,
+                                    ),
+                                  ),
+                                ),
+                              )
                             : null,
                       ),
                       onChanged: (val) {
-                        if (source != _PoolFundSource.pool) return;
+                        if (source != _PoolFundSource.pool || poolMax <= 0)
+                          return;
                         final parsed = double.tryParse(val);
-                        if (parsed != null && poolMax > 0 && parsed > poolMax) {
+                        if (parsed != null && parsed > poolMax) {
                           amountCtrl.text = poolMax.toStringAsFixed(2);
                           amountCtrl.selection = TextSelection.fromPosition(
                             TextPosition(offset: amountCtrl.text.length),
@@ -984,7 +1072,7 @@ class _PoolCard extends StatelessWidget {
     PaymentModel p,
     PaymentController payCtrl,
     String? selectedPoolId,
-    StateSetter setModalState,
+    VoidCallback onTap,
   ) {
     final available = payCtrl.availableFromPool(p);
     final enabled = available > 0.0001;
@@ -998,7 +1086,7 @@ class _PoolCard extends StatelessWidget {
       icon: Icons.circle_outlined,
       selected: selectedPoolId == p.id,
       enabled: enabled,
-      onTap: () => setModalState(() => selectedPoolId = p.id),
+      onTap: onTap,
     );
   }
 }
@@ -1417,7 +1505,7 @@ class _TransferNodeState extends State<_TransferNode> {
                         GestureDetector(
                           onTap: () => showClearDebtSheet(context, t),
                           child: _badge(
-                            'Debt +${AppUtils.formatAmount(payCtrl.remainingDebtForTransfer(t))} · Clear',
+                            'Debt +${AppUtils.formatAmount(payCtrl.effectiveReceiptDebt(t))} · Clear',
                             AppColors.debtRed,
                             AppColors.debtBg,
                           ),
@@ -1623,12 +1711,12 @@ class _TransferNodeState extends State<_TransferNode> {
                     },
                   ),
                   if (transfer.isDebt &&
-                      payCtrl.remainingDebtForTransfer(transfer) > 0.0001)
+                      payCtrl.effectiveReceiptDebt(transfer) > 0.0001)
                     _optionTile(
                       icon: Icons.price_check,
                       title: 'Clear Debt',
                       subtitle:
-                          'Settle ${AppUtils.formatAmount(payCtrl.remainingDebtForTransfer(transfer))} owed',
+                          'Settle ${AppUtils.formatAmount(payCtrl.effectiveReceiptDebt(transfer))} owed',
                       color: AppColors.debtRed,
                       onTap: () {
                         Navigator.pop(context);
@@ -1765,7 +1853,7 @@ class _TransferNodeState extends State<_TransferNode> {
                   _detailRow(
                     'Remaining debt',
                     AppUtils.formatAmount(
-                      payCtrl.remainingDebtForTransfer(transfer),
+                      payCtrl.effectiveReceiptDebt(transfer),
                     ),
                     Icons.pending_outlined,
                     AppColors.debtRed,
@@ -1803,7 +1891,7 @@ class _TransferNodeState extends State<_TransferNode> {
               ],
               const SizedBox(height: 20),
               if (transfer.isDebt &&
-                  payCtrl.remainingDebtForTransfer(transfer) > 0.0001) ...[
+                  payCtrl.effectiveReceiptDebt(transfer) > 0.0001) ...[
                 SizedBox(
                   width: double.infinity,
                   child: GoldButton(
@@ -2652,7 +2740,7 @@ void showClearDebtSheet(BuildContext context, TransferModel t) {
   if (!t.isDebt) return;
 
   final creditorName = compCtrl.getNameById(t.fromCompanyId);
-  final remaining = payCtrl.remainingDebtForTransfer(t);
+  final remaining = payCtrl.effectiveReceiptDebt(t);
   final poolAvailable = payCtrl.availableFromPool(payment);
   final double maxClearable = remaining < poolAvailable
       ? remaining
@@ -3013,6 +3101,76 @@ void showClearRootDebtSheet(BuildContext context, PaymentModel payment) {
 
 void confirmDeleteBranch(BuildContext context, TransferModel t) {
   final payCtrl = Get.find<PaymentController>();
+
+  // If this is a pool-to-pool funding transfer, check whether the
+  // destination pool has already spent some of those funds.
+  if (t.sourcePaymentId != null) {
+    final destPool = payCtrl.getPaymentById(t.paymentId);
+    if (destPool != null) {
+      final available = payCtrl.availableFromPool(destPool);
+      if (available < t.amount - 0.0001) {
+        // Destination pool already used some of this funding.
+        final usedAmt = t.amount - available.clamp(0.0, t.amount);
+        final destCode = destPool.code;
+        showDialog(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            backgroundColor: AppColors.surface,
+            shape:
+                RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+            title: Text(
+              'Cannot Delete — $destCode Has Used These Funds',
+              style: GoogleFonts.spaceGrotesk(
+                fontWeight: FontWeight.w600,
+                color: AppColors.textPrimary,
+                fontSize: 15,
+              ),
+            ),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '${AppUtils.formatAmount(usedAmt)} of this funding has already been spent in pool $destCode (via branches or debt clearances).',
+                  style: const TextStyle(
+                      color: AppColors.textSecondary, fontSize: 13),
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  'To delete this funding link, first go to $destCode and:',
+                  style: const TextStyle(
+                      color: AppColors.textSecondary, fontSize: 13),
+                ),
+                const SizedBox(height: 6),
+                const Text(
+                  '• Delete the branches that used this money, or\n'
+                  '• Undo any debt clearances paid from this pool.',
+                  style: TextStyle(color: AppColors.textSecondary, fontSize: 13),
+                ),
+                const SizedBox(height: 10),
+                Text(
+                  'Once $destCode has at least ${AppUtils.formatAmount(t.amount)} available again, you can delete this funding.',
+                  style: const TextStyle(
+                      color: AppColors.textMuted, fontSize: 12),
+                ),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(ctx).pop(),
+                child: const Text(
+                  'OK',
+                  style: TextStyle(color: AppColors.gold),
+                ),
+              ),
+            ],
+          ),
+        );
+        return;
+      }
+    }
+  }
+
   final childCount = payCtrl.getChildTransfers(t.id).isNotEmpty
       ? ' and everything under it'
       : '';
