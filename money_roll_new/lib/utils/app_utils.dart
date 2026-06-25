@@ -55,6 +55,14 @@ class AppUtils {
     return formatAmount(amount);
   }
 
+  /// Plain number without currency symbol — used inside bracket lists like "(20, 49, 50)".
+  static String formatAmountNum(double amount) {
+    if (amount == amount.truncateToDouble()) {
+      return NumberFormat('#,##0').format(amount);
+    }
+    return NumberFormat('#,##0.##').format(amount);
+  }
+
   static String formatDate(DateTime date) {
     return DateFormat('dd MMM yyyy').format(date);
   }

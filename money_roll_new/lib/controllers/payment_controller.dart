@@ -1,5 +1,6 @@
 import 'package:get/get.dart';
 import 'package:hive/hive.dart';
+import 'package:money_roll_new/controllers/company_controller.dart';
 import 'package:uuid/uuid.dart';
 import '../models/payment_model.dart';
 import '../models/transfer_model.dart';
@@ -175,7 +176,10 @@ class PaymentController extends GetxController {
           (c) => c.paymentId == payment.id && c.source == DebtClearSource.pool,
         )
         .fold(0.0, (s, c) => s + c.amount);
-    return payment.amount - sentToCompanies - movedToOtherPools - clearedFromPool;
+    return payment.amount -
+        sentToCompanies -
+        movedToOtherPools -
+        clearedFromPool;
   }
 
   List<TransferModel> poolFundingsInto(String paymentId) {
@@ -192,6 +196,36 @@ class PaymentController extends GetxController {
       ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
   }
 
+  /// Returns additional receipts into this pool after the initial creation:
+  /// transfers where money came IN (toCompanyId==null, sourcePaymentId==null)
+  /// that are NOT the original rootTransfer.
+  List<TransferModel> additionalReceipts(PaymentModel payment) {
+    // All incoming additions after the original receipt:
+    // includes free-cash, company receipts, and pool-to-pool incoming moves.
+    return _transferBox.values
+        .where(
+          (t) =>
+              t.paymentId == payment.id &&
+              t.parentTransferId == null &&
+              t.toCompanyId == null &&
+              t.id != payment.rootTransferId,
+        )
+        .toList()
+      ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
+  }
+
+  /// Human-readable source label for an additional receipt transfer.
+  String additionalReceiptLabel(TransferModel t, CompanyController compCtrl) {
+    if (t.sourcePaymentId != null) {
+      final src = getPaymentById(t.sourcePaymentId!);
+      return 'From Pool ${src?.code ?? '?'}';
+    }
+    if (t.fromCompanyId != null) {
+      return compCtrl.getNameById(t.fromCompanyId);
+    }
+    return 'Free cash';
+  }
+
   bool poolHasBranches(String paymentId) {
     return _transferBox.values.any((t) => t.paymentId == paymentId);
   }
@@ -205,6 +239,7 @@ class PaymentController extends GetxController {
     String? label,
     DateTime? date,
     DateTime? deadline,
+    bool isDebt = true,
   }) async {
     final payment = PaymentModel(
       id: _uuid.v4(),
@@ -247,8 +282,8 @@ class PaymentController extends GetxController {
           toCompanyId: null,
           sourceType: TransferSourceType.fromTotal,
           createdAt: DateTime.now(),
-          isDebt: true,
-          debtAmount: amount,
+          isDebt: isDebt,
+          debtAmount: isDebt ? amount : 0,
           code: nextBranchCode(payment, null),
         );
         await _transferBox.put(receipt.id, receipt);
@@ -430,12 +465,17 @@ class PaymentController extends GetxController {
           t.fromCompanyId != null &&
           t.toCompanyId == null) {
         final sentBackToCreditor = allTransfers
-            .where((b) =>
-                b.parentTransferId == null &&
-                b.fromCompanyId == null &&
-                b.toCompanyId == t.fromCompanyId)
+            .where(
+              (b) =>
+                  b.parentTransferId == null &&
+                  b.fromCompanyId == null &&
+                  b.toCompanyId == t.fromCompanyId,
+            )
             .fold(0.0, (s, b) => s + b.amount);
-        remaining = (remaining - sentBackToCreditor).clamp(0.0, double.infinity);
+        remaining = (remaining - sentBackToCreditor).clamp(
+          0.0,
+          double.infinity,
+        );
       }
       totalDebt += remaining;
     }
@@ -986,7 +1026,11 @@ class PaymentController extends GetxController {
     for (final t in transfers) {
       final from = t.fromCompanyId;
       final to = t.toCompanyId;
-      if (from != null) {
+      // Count the "from" side only for:
+      //  - company-to-company hops (toCompanyId != null) — always count
+      //  - root receipts that are debts (toCompanyId == null && isDebt)
+      // Non-debt company receipts (fromCompanyId set but isDebt=false) are excluded.
+      if (from != null && (t.toCompanyId != null || t.isDebt)) {
         final pools = byCompany.putIfAbsent(from, () => {});
         pools[t.paymentId] = (pools[t.paymentId] ?? 0) - t.amount;
       }
@@ -1031,11 +1075,13 @@ class PaymentController extends GetxController {
       return base;
     }
     final sentBack = _transferBox.values
-        .where((b) =>
-            b.paymentId == t.paymentId &&
-            b.parentTransferId == null &&
-            b.fromCompanyId == null &&
-            b.toCompanyId == t.fromCompanyId)
+        .where(
+          (b) =>
+              b.paymentId == t.paymentId &&
+              b.parentTransferId == null &&
+              b.fromCompanyId == null &&
+              b.toCompanyId == t.fromCompanyId,
+        )
         .fold(0.0, (s, b) => s + b.amount);
     return (base - sentBack).clamp(0.0, double.infinity);
   }
@@ -1228,6 +1274,7 @@ class PaymentController extends GetxController {
     String? note,
     String? label,
     DateTime? deadline,
+    bool isDebt = true,
   }) async {
     final payment = getPaymentById(paymentId);
     if (payment == null) throw Exception('Payment not found');
@@ -1259,8 +1306,8 @@ class PaymentController extends GetxController {
       sourceType: TransferSourceType.fromTotal,
       note: note,
       createdAt: DateTime.now(),
-      isDebt: fromCompanyId != null,
-      debtAmount: fromCompanyId != null ? amount : 0,
+      isDebt: fromCompanyId != null && isDebt,
+      debtAmount: (fromCompanyId != null && isDebt) ? amount : 0,
       code: nextBranchCode(payment, null),
       label: label,
       deadline: deadline,

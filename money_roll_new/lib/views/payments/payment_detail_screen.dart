@@ -200,6 +200,64 @@ class PaymentDetailScreen extends StatelessWidget {
                     const SizedBox(height: 16),
                     // Amount breakdown
                     _amountRow('Total Amount', payment.amount, typeColor),
+                    // Show original + additions breakdown when there are additions
+                    Builder(builder: (ctx) {
+                      final extras = payCtrl.additionalReceipts(payment);
+                      if (extras.isEmpty) return const SizedBox.shrink();
+
+                      // Get original amount from root transfer
+                      double originalAmt = payment.amount;
+                      if (payment.rootTransferId != null) {
+                        final root =
+                            payCtrl.getTransferById(payment.rootTransferId!);
+                        if (root != null) originalAmt = root.amount;
+                      }
+
+                      return Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const SizedBox(height: 6),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  'Base received',
+                                  style: const TextStyle(
+                                      fontSize: 11,
+                                      color: AppColors.textMuted),
+                                ),
+                              ),
+                              Text(
+                                AppUtils.formatAmount(originalAmt),
+                                style: const TextStyle(
+                                    fontSize: 11, color: AppColors.textMuted),
+                              ),
+                            ],
+                          ),
+                          ...extras.map((t) {
+                            final srcLabel = payCtrl.additionalReceiptLabel(t, compCtrl);
+                            return Padding(
+                              padding: const EdgeInsets.only(top: 3),
+                              child: Row(
+                                children: [
+                                  const Icon(Icons.add,
+                                      size: 10, color: AppColors.green),
+                                  const SizedBox(width: 3),
+                                  Expanded(
+                                    child: Text(
+                                      '${AppUtils.formatAmount(t.amount)}  ·  $srcLabel',
+                                      style: const TextStyle(
+                                          fontSize: 11,
+                                          color: AppColors.textMuted),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            );
+                          }),
+                        ],
+                      );
+                    }),
                     const SizedBox(height: 8),
                     _amountRow(
                       'Forwarded',

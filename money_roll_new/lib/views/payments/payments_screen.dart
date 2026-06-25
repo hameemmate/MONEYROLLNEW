@@ -126,17 +126,6 @@ class _PaymentsScreenState extends State<PaymentsScreen> {
                   ),
                   const SizedBox(width: 8),
                   _filterChip(
-                    'Sent',
-                    _filterType == PaymentType.sent,
-                    () => setState(() {
-                      _filterType = _filterType == PaymentType.sent
-                          ? null
-                          : PaymentType.sent;
-                    }),
-                    color: AppColors.red,
-                  ),
-                  const SizedBox(width: 8),
-                  _filterChip(
                     'Received',
                     _filterType == PaymentType.received,
                     () => setState(() {

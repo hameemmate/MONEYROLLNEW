@@ -32,6 +32,7 @@ class _AddPaymentScreenState extends State<AddPaymentScreen> {
   DateTime _selectedDate = DateTime.now();
   DateTime? _deadline;
   bool _loading = false;
+  bool _isDebt = true;
 
   bool get _isEdit => widget.existing != null;
 
@@ -235,9 +236,65 @@ class _AddPaymentScreenState extends State<AddPaymentScreen> {
                   ],
                   onChanged: _companyLocked
                       ? null
-                      : (val) => setState(() => _selectedCompanyId = val),
+                      : (val) => setState(() {
+                            _selectedCompanyId = val;
+                            if (val == null) _isDebt = true;
+                          }),
                 ),
               ),
+              // Debt toggle — shown only when receiving from a specific company
+              if (_type == PaymentType.received && _selectedCompanyId != null) ...[
+                const SizedBox(height: 4),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                  decoration: BoxDecoration(
+                    color: _isDebt ? AppColors.redBg : AppColors.greenBg,
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(
+                      color: _isDebt
+                          ? AppColors.debtRed.withOpacity(0.4)
+                          : AppColors.green.withOpacity(0.4),
+                    ),
+                  ),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              _isDebt ? 'I owe this back' : 'No obligation',
+                              style: TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w600,
+                                color: _isDebt ? AppColors.debtRed : AppColors.green,
+                              ),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              _isDebt
+                                  ? 'Tracked as debt — counts toward what you owe this company.'
+                                  : 'Received freely — no debt entry will be created.',
+                              style: const TextStyle(
+                                fontSize: 11,
+                                color: AppColors.textSecondary,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      Switch(
+                        value: _isDebt,
+                        onChanged: (val) => setState(() => _isDebt = val),
+                        activeColor: AppColors.debtRed,
+                        inactiveThumbColor: AppColors.green,
+                        inactiveTrackColor: AppColors.greenBg,
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 12),
+              ],
               const SizedBox(height: 16),
 
               // Date
@@ -466,6 +523,7 @@ class _AddPaymentScreenState extends State<AddPaymentScreen> {
         label: _labelCtrl.text.trim().isEmpty ? null : _labelCtrl.text.trim(),
         date: _selectedDate,
         deadline: _deadline,
+        isDebt: _isDebt,
       );
 
       Get.back();

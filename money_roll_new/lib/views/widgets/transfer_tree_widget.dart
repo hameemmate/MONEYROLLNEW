@@ -410,6 +410,51 @@ class _PoolCard extends StatelessWidget {
               color: available > 0 ? AppColors.amber : AppColors.textMuted,
             ),
           ),
+          // Additional receipts section
+          Builder(builder: (ctx) {
+            final extras = payCtrl.additionalReceipts(payment);
+            if (extras.isEmpty) return const SizedBox.shrink();
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const SizedBox(height: 8),
+                const Divider(height: 1, color: AppColors.border),
+                const SizedBox(height: 6),
+                const Text(
+                  'Additional Receipts',
+                  style: TextStyle(
+                    fontSize: 10,
+                    color: AppColors.textMuted,
+                    fontWeight: FontWeight.w600,
+                    letterSpacing: 0.3,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                ...extras.map((t) {
+                  final compCtrl = Get.find<CompanyController>();
+                  final srcLabel = payCtrl.additionalReceiptLabel(t, compCtrl);
+                  return Padding(
+                    padding: const EdgeInsets.only(top: 3),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.add_circle_outline,
+                            size: 11, color: AppColors.green),
+                        const SizedBox(width: 4),
+                        Expanded(
+                          child: Text(
+                            '${AppUtils.formatAmount(t.amount)}  ·  $srcLabel  ·  ${AppUtils.formatRelativeDate(t.createdAt)}',
+                            style: const TextStyle(
+                                fontSize: 10,
+                                color: AppColors.textSecondary),
+                          ),
+                        ),
+                      ],
+                    ),
+                  );
+                }),
+              ],
+            );
+          }),
           if (allowAdd) ...[
             const SizedBox(height: 10),
             if (available <= 0) ...[
@@ -608,6 +653,7 @@ class _PoolCard extends StatelessWidget {
     final poolSearchCtrl = TextEditingController();
     DateTime? deadline;
     bool submitting = false;
+    bool isDebt = true;
 
     _PoolFundSource source = _PoolFundSource.freeCash;
     String? selectedCompanyId;
@@ -754,7 +800,7 @@ class _PoolCard extends StatelessWidget {
                     ),
                     _modeCard(
                       title: 'From a company',
-                      subtitle: 'Cash received — becomes debt you owe them',
+                      subtitle: 'Cash received from a company — debt tracking is optional',
                       icon: Icons.business_outlined,
                       selected: source == _PoolFundSource.company,
                       enabled: true,
@@ -794,6 +840,57 @@ class _PoolCard extends StatelessWidget {
                         onChanged: (val) =>
                             setModalState(() => selectedCompanyId = val),
                       ),
+                      if (selectedCompanyId != null) ...[
+                        const SizedBox(height: 10),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                          decoration: BoxDecoration(
+                            color: isDebt ? AppColors.redBg : AppColors.greenBg,
+                            borderRadius: BorderRadius.circular(10),
+                            border: Border.all(
+                              color: isDebt
+                                  ? AppColors.debtRed.withOpacity(0.4)
+                                  : AppColors.green.withOpacity(0.4),
+                            ),
+                          ),
+                          child: Row(
+                            children: [
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      isDebt ? 'I owe this back' : 'No obligation',
+                                      style: TextStyle(
+                                        fontSize: 13,
+                                        fontWeight: FontWeight.w600,
+                                        color: isDebt ? AppColors.debtRed : AppColors.green,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 2),
+                                    Text(
+                                      isDebt
+                                          ? 'Tracked as debt — counts toward what you owe this company.'
+                                          : 'Received freely — no debt entry will be created.',
+                                      style: const TextStyle(
+                                        fontSize: 11,
+                                        color: AppColors.textSecondary,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              Switch(
+                                value: isDebt,
+                                onChanged: (val) => setModalState(() => isDebt = val),
+                                activeColor: AppColors.debtRed,
+                                inactiveThumbColor: AppColors.green,
+                                inactiveTrackColor: AppColors.greenBg,
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
                       const SizedBox(height: 12),
                     ],
                     if (source == _PoolFundSource.pool) ...[
@@ -1042,6 +1139,7 @@ class _PoolCard extends StatelessWidget {
                                   ? null
                                   : labelCtrl.text.trim(),
                               deadline: deadline,
+                              isDebt: source == _PoolFundSource.company ? isDebt : true,
                             );
                             Navigator.pop(ctx);
                             AppUtils.showSuccess(

@@ -796,12 +796,17 @@ class _DebtOwesTable extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // Aggregate debt per company from filtered payments
+    // Aggregate debt per company by attributing each debt transfer to its
+    // actual creditor (fromCompanyId), not the pool's root company.
+    // This correctly handles extra money added from a different company.
     final Map<String?, double> debtByCompany = {};
     for (final p in payments) {
-      if (p.totalDebt > 0.0001) {
-        debtByCompany[p.companyId] =
-            (debtByCompany[p.companyId] ?? 0) + p.totalDebt;
+      for (final t in payCtrl.transfers.where((t) => t.paymentId == p.id && t.isDebt)) {
+        final remaining = payCtrl.effectiveReceiptDebt(t);
+        if (remaining > 0.0001) {
+          debtByCompany[t.fromCompanyId] =
+              (debtByCompany[t.fromCompanyId] ?? 0) + remaining;
+        }
       }
     }
 
@@ -1041,40 +1046,35 @@ class _PoolReportsSectionState extends State<_PoolReportsSection> {
             ),
             child: Row(
               children: [
-                // Code badge
-                if (p.code.isNotEmpty)
-                  Container(
-                    margin: const EdgeInsets.only(right: 10),
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 8, vertical: 3),
-                    decoration: BoxDecoration(
-                      color: AppColors.gold.withOpacity(0.12),
-                      borderRadius: BorderRadius.circular(6),
-                      border: Border.all(
-                          color: AppColors.gold.withOpacity(0.3)),
-                    ),
-                    child: Text(
-                      p.code,
-                      style: GoogleFonts.spaceGrotesk(
-                        fontSize: 11,
-                        fontWeight: FontWeight.w700,
-                        color: AppColors.gold,
-                      ),
-                    ),
-                  ),
-                // Description + company
+                // Pool identifier: "M1 (description)" + company below
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(
-                        p.description.isNotEmpty ? p.description : p.code,
-                        style: const TextStyle(
-                          fontSize: 13,
-                          fontWeight: FontWeight.w600,
-                          color: AppColors.textPrimary,
-                        ),
+                      RichText(
                         overflow: TextOverflow.ellipsis,
+                        text: TextSpan(
+                          children: [
+                            TextSpan(
+                              text: p.code.isNotEmpty ? p.code : '?',
+                              style: GoogleFonts.spaceGrotesk(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w700,
+                                color: AppColors.gold,
+                              ),
+                            ),
+                            if (p.description.isNotEmpty &&
+                                p.description != p.code)
+                              TextSpan(
+                                text: ' (${p.description})',
+                                style: const TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w500,
+                                  color: AppColors.textPrimary,
+                                ),
+                              ),
+                          ],
+                        ),
                       ),
                       if (company != null)
                         Text(
@@ -1088,26 +1088,42 @@ class _PoolReportsSectionState extends State<_PoolReportsSection> {
                   ),
                 ),
                 // Amount
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.end,
-                  children: [
-                    Text(
-                      AppUtils.formatAmountCompact(p.amount),
-                      style: GoogleFonts.spaceGrotesk(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w700,
-                        color: AppColors.gold,
+                Builder(builder: (ctx) {
+                  final extras = widget.payCtrl.additionalReceipts(p);
+                  // Original base = root transfer amount
+                  double baseAmt = p.amount;
+                  if (p.rootTransferId != null) {
+                    final root = widget.payCtrl.getTransferById(p.rootTransferId!);
+                    if (root != null) baseAmt = root.amount;
+                  }
+                  final addedParts = extras
+                      .map((t) => AppUtils.formatAmountNum(t.amount))
+                      .join(', ');
+                  final amountLabel = extras.isEmpty
+                      ? AppUtils.formatAmountCompact(p.amount)
+                      : '${AppUtils.formatAmountCompact(baseAmt)} ($addedParts)';
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: [
+                      Text(
+                        amountLabel,
+                        style: GoogleFonts.spaceGrotesk(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                          color: AppColors.gold,
+                        ),
+                        textAlign: TextAlign.end,
                       ),
-                    ),
-                    Text(
-                      AppUtils.formatDateShort(p.date),
-                      style: const TextStyle(
-                        fontSize: 10,
-                        color: AppColors.textMuted,
+                      Text(
+                        AppUtils.formatDateShort(p.date),
+                        style: const TextStyle(
+                          fontSize: 10,
+                          color: AppColors.textMuted,
+                        ),
                       ),
-                    ),
-                  ],
-                ),
+                    ],
+                  );
+                }),
                 const SizedBox(width: 12),
                 // Export button
                 GestureDetector(

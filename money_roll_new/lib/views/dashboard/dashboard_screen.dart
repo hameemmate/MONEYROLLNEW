@@ -59,40 +59,6 @@ class DashboardScreen extends StatelessWidget {
                           ],
                         ),
                         const Spacer(),
-                        GestureDetector(
-                          onTap: () => _showAddCashSheet(context, payCtrl),
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 14,
-                              vertical: 8,
-                            ),
-                            decoration: BoxDecoration(
-                              color: AppColors.goldDark.withOpacity(0.2),
-                              borderRadius: BorderRadius.circular(10),
-                              border: Border.all(
-                                color: AppColors.gold.withOpacity(0.4),
-                              ),
-                            ),
-                            child: Row(
-                              children: [
-                                const Icon(
-                                  Icons.add,
-                                  size: 14,
-                                  color: AppColors.gold,
-                                ),
-                                const SizedBox(width: 4),
-                                Text(
-                                  'Add Cash',
-                                  style: GoogleFonts.spaceGrotesk(
-                                    fontSize: 13,
-                                    fontWeight: FontWeight.w600,
-                                    color: AppColors.gold,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
                       ],
                     ),
                   ),
@@ -170,11 +136,11 @@ class DashboardScreen extends StatelessWidget {
                                   ),
                                   const SizedBox(width: 20),
                                   _miniStat(
-                                    '↓ Sent',
+                                    'Debt',
                                     AppUtils.formatAmountCompact(
-                                      payCtrl.totalSentThisMonth,
+                                      payCtrl.totalDebtOwedByMe,
                                     ),
-                                    AppColors.red,
+                                    AppColors.debtRed,
                                   ),
                                 ],
                               ),
@@ -326,7 +292,7 @@ class DashboardScreen extends StatelessWidget {
                               children: [
                                 _chartLegend(AppColors.green, 'Received'),
                                 const SizedBox(width: 16),
-                                _chartLegend(AppColors.red, 'Sent'),
+                                _chartLegend(AppColors.debtRed, 'Debt'),
                               ],
                             ),
                           ],
@@ -716,8 +682,8 @@ class DashboardScreen extends StatelessWidget {
                 ),
               ),
               BarChartRodData(
-                toY: (entry.value['sent'] as double),
-                color: AppColors.red,
+                toY: (entry.value['debt'] as double),
+                color: AppColors.debtRed,
                 width: 8,
                 borderRadius: const BorderRadius.vertical(
                   top: Radius.circular(4),
@@ -750,170 +716,4 @@ class DashboardScreen extends StatelessWidget {
     );
   }
 
-  void _showAddCashSheet(BuildContext context, PaymentController payCtrl) {
-    final amountCtrl = TextEditingController();
-    final descCtrl = TextEditingController();
-    final compCtrl = Get.find<CompanyController>();
-    String? fromCompanyId;
-    bool submitting = false;
-
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: AppColors.surface,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setState) => Padding(
-          padding: EdgeInsets.only(
-            left: 20,
-            right: 20,
-            top: 20,
-            bottom: MediaQuery.of(ctx).viewInsets.bottom + 24,
-          ),
-          child: SafeArea(
-            bottom: true,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Center(
-                  child: Container(
-                    width: 40,
-                    height: 4,
-                    decoration: BoxDecoration(
-                      color: AppColors.border,
-                      borderRadius: BorderRadius.circular(2),
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 16),
-                Text(
-                  'Add Cash to Hand',
-                  style: GoogleFonts.spaceGrotesk(
-                    fontSize: 17,
-                    fontWeight: FontWeight.w600,
-                    color: AppColors.textPrimary,
-                  ),
-                ),
-                const SizedBox(height: 12),
-                Container(
-                  padding: const EdgeInsets.all(10),
-                  decoration: BoxDecoration(
-                    color: AppColors.greenBg,
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Row(
-                    children: [
-                      const Icon(
-                        Icons.info_outline,
-                        size: 14,
-                        color: AppColors.green,
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          fromCompanyId == null
-                              ? 'Creates a "Received" pool and adds to cash in hand. Sending money to companies is only possible by branching from a pool.'
-                              : 'Cash received from a company is recorded as debt you owe them until settled.',
-                          style: const TextStyle(
-                            fontSize: 12,
-                            color: AppColors.green,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 16),
-                TextField(
-                  controller: amountCtrl,
-                  keyboardType: TextInputType.number,
-                  style: const TextStyle(color: AppColors.textPrimary),
-                  decoration: const InputDecoration(
-                    labelText: 'Amount (AED)',
-                    prefixText: 'د.إ ',
-                  ),
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: descCtrl,
-                  style: const TextStyle(color: AppColors.textPrimary),
-                  decoration: const InputDecoration(
-                    labelText: 'Description / Source',
-                  ),
-                ),
-                const SizedBox(height: 12),
-                DropdownButtonFormField<String>(
-                  value: fromCompanyId,
-                  dropdownColor: AppColors.surfaceAlt,
-                  style: const TextStyle(color: AppColors.textPrimary),
-                  decoration: const InputDecoration(
-                    labelText: 'From (optional)',
-                  ),
-                  items: [
-                    const DropdownMenuItem(
-                      value: null,
-                      child: Text('Free entry / Cash'),
-                    ),
-                    ...compCtrl.companies.map(
-                      (c) => DropdownMenuItem(value: c.id, child: Text(c.name)),
-                    ),
-                  ],
-                  onChanged: (val) => setState(() => fromCompanyId = val),
-                ),
-                const SizedBox(height: 20),
-                SizedBox(
-                  width: double.infinity,
-                  child: GoldButton(
-                    label: 'Add Cash',
-                    isLoading: submitting,
-                    onTap: () async {
-                      if (submitting) return;
-                      final amt = double.tryParse(amountCtrl.text.trim());
-                      if (amt == null || amt <= 0) {
-                        AppUtils.showError('Error', 'Enter valid amount');
-                        return;
-                      }
-
-                      if (descCtrl.text.trim().isEmpty) {
-                        AppUtils.showError('Error', 'Enter description');
-                        return;
-                      }
-
-                      setState(() => submitting = true);
-                      try {
-                        await payCtrl.createPayment(
-                          type: PaymentType.received,
-                          amount: amt,
-                          description: descCtrl.text.trim(),
-                          companyId: fromCompanyId,
-                          note: fromCompanyId == null
-                              ? 'Manual cash addition'
-                              : 'Cash received from ${compCtrl.getNameById(fromCompanyId)}',
-                          label: 'Cash added',
-                        );
-                        Navigator.pop(ctx);
-                        AppUtils.showSuccess(
-                          'Cash Added',
-                          '${AppUtils.formatAmount(amt)} added to cash in hand',
-                        );
-                      } catch (e) {
-                        setState(() => submitting = false);
-                        AppUtils.showError(
-                          'Error',
-                          e.toString().replaceFirst('Exception: ', ''),
-                        );
-                      }
-                    },
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
 }

@@ -29,23 +29,16 @@ class DashboardController extends GetxController {
     final result = <Map<String, dynamic>>[];
     for (int i = 5; i >= 0; i--) {
       final month = DateTime(now.year, now.month - i, 1);
-      final sent = paymentCtrl.payments
-          .where(
-            (p) =>
-                p.date.year == month.year &&
-                p.date.month == month.month &&
-                p.type.name == 'sent',
-          )
+      final monthPayments = paymentCtrl.payments.where(
+        (p) => p.date.year == month.year && p.date.month == month.month,
+      );
+      final received = monthPayments
+          .where((p) => p.type.name == 'received')
           .fold(0.0, (sum, p) => sum + p.amount);
-      final received = paymentCtrl.payments
-          .where(
-            (p) =>
-                p.date.year == month.year &&
-                p.date.month == month.month &&
-                p.type.name == 'received',
-          )
-          .fold(0.0, (sum, p) => sum + p.amount);
-      result.add({'month': month, 'sent': sent, 'received': received});
+      final debt = monthPayments
+          .where((p) => p.type.name == 'received')
+          .fold(0.0, (sum, p) => sum + p.totalDebt);
+      result.add({'month': month, 'debt': debt, 'received': received});
     }
     return result;
   }

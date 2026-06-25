@@ -30,6 +30,15 @@ class PdfReportService {
     return 'AED ${f.format(amount)}';
   }
 
+  /// Short number without currency prefix — used inside brackets like "(20, 49)".
+  static String _fmtCompact(double amount) {
+    if (amount == amount.truncateToDouble()) {
+      return amount.toStringAsFixed(0);
+    }
+    final f = NumberFormat('#,##0.##');
+    return f.format(amount);
+  }
+
   static String _fmtDate(DateTime d) => DateFormat('dd MMM yyyy').format(d);
   static String _fmtDateTime(DateTime d) =>
       DateFormat('dd MMM yyyy, hh:mm a').format(d);
@@ -104,12 +113,17 @@ class PdfReportService {
       for (final e in payCtrl.companiesThatOweMe) e.key: e.value,
     };
 
-    // Debt per company
+    // Debt per company — attributed to the actual creditor on each debt transfer,
+    // not just the pool's root company. This handles the case where extra money
+    // was added from a different company into the same pool.
     final Map<String?, double> debtByCompany = {};
     for (final p in payCtrl.payments) {
-      if (p.totalDebt > 0.0001) {
-        debtByCompany[p.companyId] =
-            (debtByCompany[p.companyId] ?? 0.0) + p.totalDebt;
+      for (final t in payCtrl.transfers.where((t) => t.paymentId == p.id && t.isDebt)) {
+        final remaining = payCtrl.effectiveReceiptDebt(t);
+        if (remaining > 0.0001) {
+          debtByCompany[t.fromCompanyId] =
+              (debtByCompany[t.fromCompanyId] ?? 0.0) + remaining;
+        }
       }
     }
 
@@ -136,8 +150,11 @@ class PdfReportService {
       for (var i = 0; i < pools.length; i++) {
         final p = pools[i];
         final sent = p.amount - p.remainingAmount;
+        // Format: "M1 (description)" when both present, else just one of them.
         final poolLabel = p.code.isNotEmpty
-            ? '${p.code}  ${p.description}'
+            ? (p.description.isNotEmpty && p.description != p.code
+                ? '${p.code} (${p.description})'
+                : p.code)
             : (p.description.isNotEmpty ? p.description : '-');
         final altBg = rowIndex % 2 == 1;
 
@@ -171,11 +188,23 @@ class PdfReportService {
                         fontSize: 8.5,
                         color: _textSecondary)),
               ),
-              // Received
+              // Received (base + additions in brackets)
               pw.Expanded(
                 flex: 3,
-                child: pw.Text(_fmt(p.amount),
-                    textAlign: pw.TextAlign.right,
+                child: pw.Text(() {
+                  final extras = payCtrl.additionalReceipts(p);
+                  if (extras.isEmpty) return _fmt(p.amount);
+                  double base = p.amount;
+                  if (p.rootTransferId != null) {
+                    final root = payCtrl.getTransferById(p.rootTransferId!);
+                    if (root != null) base = root.amount;
+                  }
+                  final parts = extras
+                      .map((t) => _fmtCompact(t.amount))
+                      .join(', ');
+                  return '${_fmtCompact(base)} ($parts)';
+                }(),
+                textAlign: pw.TextAlign.right,
                     style:
                         pw.TextStyle(font: _bold, fontSize: 9, color: _gold)),
               ),
@@ -590,8 +619,17 @@ class PdfReportService {
             ),
             child: pw.Row(
               children: [
-                _statCell('Total Amount', _fmt(payment.amount), _gold,
-                    isFirst: true),
+                _statCell('Total Amount', () {
+                  final extras = payCtrl.additionalReceipts(payment);
+                  if (extras.isEmpty) return _fmt(payment.amount);
+                  double base = payment.amount;
+                  if (payment.rootTransferId != null) {
+                    final root = payCtrl.getTransferById(payment.rootTransferId!);
+                    if (root != null) base = root.amount;
+                  }
+                  final parts = extras.map((t) => _fmtCompact(t.amount)).join(', ');
+                  return '${_fmtCompact(base)} ($parts)';
+                }(), _gold, isFirst: true),
                 _dividerV(),
                 _statCell('Forwarded', _fmt(forwarded), _textSecondary),
                 _dividerV(),
@@ -678,6 +716,9 @@ class PdfReportService {
               ],
             ),
           ),
+
+          // Additional receipts block
+          ..._buildAdditionalReceiptsSection(payment, payCtrl, compCtrl),
 
           if (transfers.isNotEmpty) ...[
             pw.SizedBox(height: 16),
@@ -1060,6 +1101,140 @@ class PdfReportService {
         ],
       ),
     );
+  }
+
+  // ── Additional receipts section ───────────────────────────────────────────
+
+  static List<pw.Widget> _buildAdditionalReceiptsSection(
+    PaymentModel payment,
+    PaymentController payCtrl,
+    CompanyController compCtrl,
+  ) {
+    final extras = payCtrl.additionalReceipts(payment);
+    if (extras.isEmpty) return [];
+
+    double originalAmt = payment.amount;
+    if (payment.rootTransferId != null) {
+      final root = payCtrl.getTransferById(payment.rootTransferId!);
+      if (root != null) originalAmt = root.amount;
+    }
+
+    final labelStyle = pw.TextStyle(
+      font: _bold,
+      fontSize: 8,
+      color: _textMuted,
+    );
+    final cellStyle = pw.TextStyle(
+      font: _regular,
+      fontSize: 8.5,
+      color: _textPrimary,
+    );
+
+    return [
+      pw.SizedBox(height: 12),
+      _sectionLabel('ADDITIONAL RECEIPTS'),
+      pw.SizedBox(height: 6),
+      pw.Container(
+        decoration: pw.BoxDecoration(
+          border: pw.Border.all(color: _borderColor, width: 0.5),
+          borderRadius: pw.BorderRadius.circular(6),
+        ),
+        child: pw.Column(
+          children: [
+            // Header row
+            pw.Container(
+              padding:
+                  const pw.EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              decoration: pw.BoxDecoration(
+                color: _rowAlt,
+                borderRadius: const pw.BorderRadius.vertical(
+                    top: pw.Radius.circular(6)),
+              ),
+              child: pw.Row(
+                children: [
+                  pw.Expanded(child: pw.Text('Source', style: labelStyle)),
+                  pw.SizedBox(width: 8),
+                  pw.Text('Date', style: labelStyle),
+                  pw.SizedBox(width: 24),
+                  pw.SizedBox(
+                    width: 72,
+                    child: pw.Text('Amount',
+                        style: labelStyle,
+                        textAlign: pw.TextAlign.right),
+                  ),
+                ],
+              ),
+            ),
+            // Base row
+            pw.Container(
+              padding:
+                  const pw.EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+              decoration: pw.BoxDecoration(
+                border: pw.Border(
+                    top: pw.BorderSide(color: _borderColor, width: 0.5)),
+              ),
+              child: pw.Row(
+                children: [
+                  pw.Expanded(
+                      child: pw.Text('Base received', style: cellStyle)),
+                  pw.SizedBox(width: 8),
+                  pw.Text(_fmtDate(payment.date), style: cellStyle),
+                  pw.SizedBox(width: 24),
+                  pw.SizedBox(
+                    width: 72,
+                    child: pw.Text(_fmt(originalAmt),
+                        style: cellStyle,
+                        textAlign: pw.TextAlign.right),
+                  ),
+                ],
+              ),
+            ),
+            // Addition rows
+            ...extras.map((t) {
+              final srcLabel = t.sourcePaymentId != null
+                  ? 'From Pool ${payCtrl.getPaymentById(t.sourcePaymentId!)?.code ?? '?'}'
+                  : t.fromCompanyId != null
+                      ? (compCtrl.getById(t.fromCompanyId!)?.name ?? '?')
+                      : 'Free cash';
+              return pw.Container(
+                padding:
+                    const pw.EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                decoration: pw.BoxDecoration(
+                  border: pw.Border(
+                      top: pw.BorderSide(color: _borderColor, width: 0.5)),
+                ),
+                child: pw.Row(
+                  children: [
+                    pw.Container(
+                      width: 6,
+                      height: 6,
+                      margin: const pw.EdgeInsets.only(right: 6, top: 1),
+                      decoration: pw.BoxDecoration(
+                        color: _green,
+                        shape: pw.BoxShape.circle,
+                      ),
+                    ),
+                    pw.Expanded(
+                        child: pw.Text(srcLabel, style: cellStyle)),
+                    pw.SizedBox(width: 8),
+                    pw.Text(_fmtDate(t.createdAt), style: cellStyle),
+                    pw.SizedBox(width: 24),
+                    pw.SizedBox(
+                      width: 72,
+                      child: pw.Text(
+                        '+${_fmt(t.amount)}',
+                        style: cellStyle.copyWith(color: _green),
+                        textAlign: pw.TextAlign.right,
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            }),
+          ],
+        ),
+      ),
+    ];
   }
 
   // ── Shared PDF widget helpers ─────────────────────────────────────────────
