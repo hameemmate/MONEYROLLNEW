@@ -1026,23 +1026,26 @@ class PaymentController extends GetxController {
     for (final t in transfers) {
       final from = t.fromCompanyId;
       final to = t.toCompanyId;
-      // Count the "from" side only for:
-      //  - company-to-company hops (toCompanyId != null) — always count
-      //  - root receipts that are debts (toCompanyId == null && isDebt)
-      // Non-debt company receipts (fromCompanyId set but isDebt=false) are excluded.
-      if (from != null && (t.toCompanyId != null || t.isDebt)) {
+
+      // Any transfer where a company sends money reduces that company's balance
+      if (from != null) {
         final pools = byCompany.putIfAbsent(from, () => {});
         pools[t.paymentId] = (pools[t.paymentId] ?? 0) - t.amount;
       }
+
+      // Any transfer where a company receives money increases that company's balance
       if (to != null) {
         final pools = byCompany.putIfAbsent(to, () => {});
         pools[t.paymentId] = (pools[t.paymentId] ?? 0) + t.amount;
       }
     }
+
+    // Debt clearances also affect balances (they are payments from you to the company)
     for (final c in debtClearances) {
       final pools = byCompany.putIfAbsent(c.companyId, () => {});
       pools[c.paymentId] = (pools[c.paymentId] ?? 0) + c.amount;
     }
+
     return {for (final e in byCompany.entries) e.key: e.value.values.toList()};
   }
 
