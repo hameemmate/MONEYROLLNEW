@@ -14,6 +14,7 @@ class CompanyBalanceScreen extends StatelessWidget {
   const CompanyBalanceScreen({super.key});
 
   @override
+  @override
   Widget build(BuildContext context) {
     final payCtrl = Get.find<PaymentController>();
     final compCtrl = Get.find<CompanyController>();
@@ -36,7 +37,23 @@ class CompanyBalanceScreen extends StatelessWidget {
         final owesMe = payCtrl.companiesThatOweMe;
         final iOwe = payCtrl.companiesIOwe;
 
-        if (owesMe.isEmpty && iOwe.isEmpty) {
+        // Build settled companies: those with balance == 0 but with transfers
+        final settledCompanies = <String, double>{};
+        // Get all company IDs that appear in transfers
+        final companyIdsInTransfers = <String>{};
+        for (final t in payCtrl.transfers) {
+          if (t.fromCompanyId != null)
+            companyIdsInTransfers.add(t.fromCompanyId!);
+          if (t.toCompanyId != null) companyIdsInTransfers.add(t.toCompanyId!);
+        }
+        for (final id in companyIdsInTransfers) {
+          final balance = payCtrl.getCompanyBalance(id);
+          if (balance.abs() < 0.0001) {
+            settledCompanies[id] = 0.0;
+          }
+        }
+
+        if (owesMe.isEmpty && iOwe.isEmpty && settledCompanies.isEmpty) {
           return const Center(
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
@@ -62,7 +79,7 @@ class CompanyBalanceScreen extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // Summary Cards
+              // Summary Cards (unchanged)
               Row(
                 children: [
                   Expanded(
@@ -114,6 +131,27 @@ class CompanyBalanceScreen extends StatelessWidget {
                     entry.key,
                     entry.value,
                     false,
+                    compCtrl,
+                    payCtrl,
+                    context,
+                  ),
+                ),
+                const SizedBox(height: 24),
+              ],
+
+              // Settled / No obligation companies
+              if (settledCompanies.isNotEmpty) ...[
+                _sectionHeader(
+                  'Settled / No Obligation',
+                  AppColors.amber,
+                  settledCompanies.length,
+                ),
+                const SizedBox(height: 8),
+                ...settledCompanies.entries.map(
+                  (entry) => _companyBalanceCard(
+                    entry.key,
+                    0.0,
+                    null, // neutral
                     compCtrl,
                     payCtrl,
                     context,
@@ -292,7 +330,7 @@ class CompanyBalanceScreen extends StatelessWidget {
   Widget _companyBalanceCard(
     String companyId,
     double balance,
-    bool owesMe,
+    bool? owesMe, // true = owes you, false = you owe, null = settled
     CompanyController compCtrl,
     PaymentController payCtrl,
     BuildContext context,
@@ -300,8 +338,25 @@ class CompanyBalanceScreen extends StatelessWidget {
     final company = compCtrl.getById(companyId);
     if (company == null) return const SizedBox();
 
-    // Get ALL payments involving this company (including transfers)
     final companyPayments = _getPaymentsForCompany(companyId, payCtrl);
+
+    // Determine the status text and colors
+    String statusText;
+    Color statusColor;
+    Color borderColor;
+    if (owesMe == true) {
+      statusText = 'Owes you';
+      statusColor = AppColors.green;
+      borderColor = AppColors.green.withOpacity(0.3);
+    } else if (owesMe == false) {
+      statusText = 'You owe';
+      statusColor = AppColors.red;
+      borderColor = AppColors.red.withOpacity(0.3);
+    } else {
+      statusText = 'Settled / No obligation';
+      statusColor = AppColors.amber;
+      borderColor = AppColors.amber.withOpacity(0.3);
+    }
 
     return GestureDetector(
       onTap: () {
@@ -309,7 +364,7 @@ class CompanyBalanceScreen extends StatelessWidget {
           context,
           company,
           balance,
-          owesMe,
+          owesMe ?? false,
           companyPayments,
           payCtrl,
           compCtrl,
@@ -322,11 +377,7 @@ class CompanyBalanceScreen extends StatelessWidget {
         decoration: BoxDecoration(
           color: AppColors.surface,
           borderRadius: BorderRadius.circular(12),
-          border: Border.all(
-            color: owesMe
-                ? AppColors.green.withOpacity(0.3)
-                : AppColors.red.withOpacity(0.3),
-          ),
+          border: Border.all(color: borderColor),
         ),
         child: Row(
           children: [
@@ -366,18 +417,38 @@ class CompanyBalanceScreen extends StatelessWidget {
             Column(
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [
-                AmountBadge(
-                  amount: balance.abs(),
-                  isPositive: owesMe,
-                  isDebt: !owesMe,
-                ),
+                if (owesMe != null)
+                  AmountBadge(
+                    amount: balance.abs(),
+                    isPositive: owesMe,
+                    isDebt: !owesMe,
+                  )
+                else
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 4,
+                    ),
+                    decoration: BoxDecoration(
+                      color: AppColors.amberBg,
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: Text(
+                      'Settled',
+                      style: GoogleFonts.spaceGrotesk(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.amber,
+                      ),
+                    ),
+                  ),
                 const SizedBox(height: 4),
                 Text(
-                  owesMe ? 'Owes you' : 'You owe',
+                  statusText,
                   style: TextStyle(
                     fontSize: 11,
                     fontWeight: FontWeight.w500,
-                    color: owesMe ? AppColors.green : AppColors.red,
+                    color: statusColor,
                   ),
                 ),
               ],

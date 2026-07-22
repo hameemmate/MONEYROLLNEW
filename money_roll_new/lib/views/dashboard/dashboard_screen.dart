@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:fl_chart/fl_chart.dart';
+import 'package:money_roll_new/models/payment_model.dart';
 import '../../controllers/dashboard_controller.dart';
 import '../../controllers/payment_controller.dart';
 import '../../controllers/company_controller.dart';
@@ -339,57 +340,58 @@ class DashboardScreen extends StatelessWidget {
                             final balance = entry.value;
                             final owesMe = balance > 0;
                             return GestureDetector(
-                              onTap: () => Get.to(
-                                () => const CompanyBalanceScreen(),
-                              ),
+                              onTap: () =>
+                                  Get.to(() => const CompanyBalanceScreen()),
                               child: Container(
-                              margin: const EdgeInsets.only(bottom: 8),
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 14,
-                                vertical: 12,
-                              ),
-                              decoration: BoxDecoration(
-                                color: AppColors.surface,
-                                borderRadius: BorderRadius.circular(10),
-                                border: Border.all(color: AppColors.border),
-                              ),
-                              child: Row(
-                                children: [
-                                  CompanyAvatar(name: name, size: 36),
-                                  const SizedBox(width: 12),
-                                  Expanded(
-                                    child: Column(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.start,
-                                      children: [
-                                        Text(
-                                          name,
-                                          style: GoogleFonts.spaceGrotesk(
-                                            fontSize: 14,
-                                            fontWeight: FontWeight.w600,
-                                            color: AppColors.textPrimary,
+                                margin: const EdgeInsets.only(bottom: 8),
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 14,
+                                  vertical: 12,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: AppColors.surface,
+                                  borderRadius: BorderRadius.circular(10),
+                                  border: Border.all(color: AppColors.border),
+                                ),
+                                child: Row(
+                                  children: [
+                                    CompanyAvatar(name: name, size: 36),
+                                    const SizedBox(width: 12),
+                                    Expanded(
+                                      child: Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: [
+                                          Text(
+                                            name,
+                                            style: GoogleFonts.spaceGrotesk(
+                                              fontSize: 14,
+                                              fontWeight: FontWeight.w600,
+                                              color: AppColors.textPrimary,
+                                            ),
                                           ),
-                                        ),
-                                        Text(
-                                          owesMe ? 'Owes you' : 'You owe them',
-                                          style: TextStyle(
-                                            fontSize: 11,
-                                            color: owesMe
-                                                ? AppColors.green
-                                                : AppColors.red,
+                                          Text(
+                                            owesMe
+                                                ? 'Owes you'
+                                                : 'You owe them',
+                                            style: TextStyle(
+                                              fontSize: 11,
+                                              color: owesMe
+                                                  ? AppColors.green
+                                                  : AppColors.red,
+                                            ),
                                           ),
-                                        ),
-                                      ],
+                                        ],
+                                      ),
                                     ),
-                                  ),
-                                  AmountBadge(
-                                    amount: balance.abs(),
-                                    isPositive: owesMe,
-                                    isDebt: !owesMe,
-                                  ),
-                                ],
+                                    AmountBadge(
+                                      amount: balance.abs(),
+                                      isPositive: owesMe,
+                                      isDebt: !owesMe,
+                                    ),
+                                  ],
+                                ),
                               ),
-                            ),
                             );
                           }),
                       ],
@@ -545,7 +547,150 @@ class DashboardScreen extends StatelessWidget {
                       );
                     }, childCount: payCtrl.recentPayments.length),
                   ),
+                // ── Upcoming Deadlines ──────────────────────────────────────────────
+                if (dashCtrl.upcomingDeadlinePayments.isNotEmpty) ...[
+                  SliverToBoxAdapter(
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(20, 20, 20, 0),
+                      child: SectionHeader(
+                        title: '⚠️ Upcoming Deadlines',
+                        actionLabel:
+                            '${dashCtrl.upcomingDeadlinePayments.length} pending',
+                      ),
+                    ),
+                  ),
+                  SliverList(
+                    delegate: SliverChildBuilderDelegate((ctx, i) {
+                      final payment = dashCtrl.upcomingDeadlinePayments[i];
+                      final company = payment.companyId != null
+                          ? compCtrl.getById(payment.companyId!)
+                          : null;
+                      final earliest = _earliestDeadline(payment);
 
+                      return GestureDetector(
+                        onTap: () => Get.to(
+                          () => PaymentDetailScreen(paymentId: payment.id),
+                          transition: Transition.cupertino,
+                          duration: const Duration(milliseconds: 280),
+                        ),
+                        child: Container(
+                          margin: const EdgeInsets.fromLTRB(20, 6, 20, 0),
+                          padding: const EdgeInsets.all(14),
+                          decoration: BoxDecoration(
+                            color: AppColors.surface,
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(
+                              color:
+                                  earliest != null &&
+                                      earliest.isBefore(DateTime.now())
+                                  ? AppColors.red.withOpacity(0.6)
+                                  : AppColors.amber.withOpacity(0.6),
+                            ),
+                          ),
+                          child: Row(
+                            children: [
+                              Container(
+                                width: 38,
+                                height: 38,
+                                decoration: BoxDecoration(
+                                  color: payment.type == PaymentType.received
+                                      ? AppColors.greenBg
+                                      : AppColors.redBg,
+                                  borderRadius: BorderRadius.circular(10),
+                                ),
+                                child: Icon(
+                                  payment.type == PaymentType.received
+                                      ? Icons.arrow_downward
+                                      : Icons.arrow_upward,
+                                  size: 16,
+                                  color: payment.type == PaymentType.received
+                                      ? AppColors.green
+                                      : AppColors.red,
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      payment.description,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: GoogleFonts.spaceGrotesk(
+                                        fontSize: 13,
+                                        fontWeight: FontWeight.w600,
+                                        color: AppColors.textPrimary,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 2),
+                                    Row(
+                                      children: [
+                                        if (company != null) ...[
+                                          CompanyAvatar(
+                                            name: company.name,
+                                            size: 14,
+                                          ),
+                                          const SizedBox(width: 4),
+                                          Text(
+                                            company.name,
+                                            style: const TextStyle(
+                                              fontSize: 11,
+                                              color: AppColors.textSecondary,
+                                            ),
+                                          ),
+                                          const SizedBox(width: 6),
+                                        ],
+                                        Text(
+                                          payment.code,
+                                          style: const TextStyle(
+                                            fontSize: 10,
+                                            fontWeight: FontWeight.w600,
+                                            color: AppColors.gold,
+                                          ),
+                                        ),
+                                        const SizedBox(width: 6),
+                                        if (earliest != null)
+                                          DeadlineChip(
+                                            deadline: earliest,
+                                            compact: true,
+                                          ),
+                                      ],
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              Column(
+                                crossAxisAlignment: CrossAxisAlignment.end,
+                                children: [
+                                  Text(
+                                    AppUtils.formatAmount(payment.amount),
+                                    style: GoogleFonts.spaceGrotesk(
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.w700,
+                                      color:
+                                          payment.type == PaymentType.received
+                                          ? AppColors.green
+                                          : AppColors.red,
+                                    ),
+                                  ),
+                                  if (payment.totalDebt > 0)
+                                    Text(
+                                      'Debt: ${AppUtils.formatAmount(payment.totalDebt)}',
+                                      style: const TextStyle(
+                                        fontSize: 10,
+                                        color: AppColors.debtRed,
+                                      ),
+                                    ),
+                                ],
+                              ),
+                            ],
+                          ),
+                        ),
+                      );
+                    }, childCount: dashCtrl.upcomingDeadlinePayments.length),
+                  ),
+                  const SliverToBoxAdapter(child: SizedBox(height: 12)),
+                ],
                 const SliverToBoxAdapter(child: SizedBox(height: 100)),
               ],
             ),
@@ -716,4 +861,17 @@ class DashboardScreen extends StatelessWidget {
     );
   }
 
+  DateTime? _earliestDeadline(PaymentModel payment) {
+    DateTime? earliest = payment.deadline;
+    for (final t in Get.find<PaymentController>().transfers.where(
+      (t) => t.paymentId == payment.id,
+    )) {
+      if (t.deadline != null) {
+        if (earliest == null || t.deadline!.isBefore(earliest)) {
+          earliest = t.deadline;
+        }
+      }
+    }
+    return earliest;
+  }
 }

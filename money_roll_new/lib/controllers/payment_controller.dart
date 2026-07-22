@@ -94,16 +94,18 @@ class PaymentController extends GetxController {
       final to = transfer.toCompanyId;
       final amt = transfer.amount;
 
+      // Me → company : company owes me
       if (from == null && to != null) {
         balances[to] = (balances[to] ?? 0) + amt;
-      } else if (from != null && to == null) {
-        balances[from] = (balances[from] ?? 0) - amt;
-      } else if (from != null && to != null) {
-        balances[from] = (balances[from] ?? 0) - amt;
-        balances[to] = (balances[to] ?? 0) + amt;
       }
+      // Company → Me : only if it's a debt (I owe them)
+      else if (from != null && to == null && transfer.isDebt) {
+        balances[from] = (balances[from] ?? 0) - amt;
+      }
+      // Company ↔ Company or both null : ignored
     }
 
+    // Debt clearances reduce what I owe → add to balance
     for (final c in debtClearances) {
       balances[c.companyId] = (balances[c.companyId] ?? 0) + c.amount;
     }
@@ -1023,24 +1025,25 @@ class PaymentController extends GetxController {
 
   Map<String, List<double>> _companyPoolBalances() {
     final Map<String, Map<String, double>> byCompany = {};
+
     for (final t in transfers) {
       final from = t.fromCompanyId;
       final to = t.toCompanyId;
+      final amt = t.amount;
 
-      // Any transfer where a company sends money reduces that company's balance
-      if (from != null) {
-        final pools = byCompany.putIfAbsent(from, () => {});
-        pools[t.paymentId] = (pools[t.paymentId] ?? 0) - t.amount;
-      }
-
-      // Any transfer where a company receives money increases that company's balance
-      if (to != null) {
+      if (from == null && to != null) {
+        // Me → company : company owes me
         final pools = byCompany.putIfAbsent(to, () => {});
-        pools[t.paymentId] = (pools[t.paymentId] ?? 0) + t.amount;
+        pools[t.paymentId] = (pools[t.paymentId] ?? 0) + amt;
+      } else if (from != null && to == null && t.isDebt) {
+        // Company → Me : only if debt
+        final pools = byCompany.putIfAbsent(from, () => {});
+        pools[t.paymentId] = (pools[t.paymentId] ?? 0) - amt;
       }
+      // else ignore
     }
 
-    // Debt clearances also affect balances (they are payments from you to the company)
+    // Debt clearances add to balance
     for (final c in debtClearances) {
       final pools = byCompany.putIfAbsent(c.companyId, () => {});
       pools[c.paymentId] = (pools[c.paymentId] ?? 0) + c.amount;

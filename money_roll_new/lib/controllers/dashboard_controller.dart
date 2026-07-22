@@ -1,4 +1,5 @@
 import 'package:get/get.dart';
+import 'package:money_roll_new/models/payment_model.dart';
 import 'payment_controller.dart';
 import 'company_controller.dart';
 
@@ -40,6 +41,74 @@ class DashboardController extends GetxController {
           .fold(0.0, (sum, p) => sum + p.totalDebt);
       result.add({'month': month, 'debt': debt, 'received': received});
     }
+    return result;
+  }
+
+  /// Payments that have a deadline (on the payment or any branch) that is today or in the past.
+  List<PaymentModel> get upcomingDeadlinePayments {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final result = <PaymentModel>[];
+
+    for (final payment in paymentCtrl.payments) {
+      bool hasDeadline = false;
+
+      // Check payment's own deadline
+      if (payment.deadline != null) {
+        final d = DateTime(
+          payment.deadline!.year,
+          payment.deadline!.month,
+          payment.deadline!.day,
+        );
+        if (d.compareTo(today) <= 0) hasDeadline = true;
+      }
+
+      // Check any transfer (branch) deadlines
+      if (!hasDeadline) {
+        for (final t in paymentCtrl.transfers.where(
+          (t) => t.paymentId == payment.id,
+        )) {
+          if (t.deadline != null) {
+            final d = DateTime(
+              t.deadline!.year,
+              t.deadline!.month,
+              t.deadline!.day,
+            );
+            if (d.compareTo(today) <= 0) {
+              hasDeadline = true;
+              break;
+            }
+          }
+        }
+      }
+
+      if (hasDeadline) result.add(payment);
+    }
+
+    // Sort by the earliest deadline (payment or any of its branches)
+    result.sort((a, b) {
+      DateTime? earliestFor(PaymentModel p) {
+        DateTime? earliest = p.deadline;
+        for (final t in paymentCtrl.transfers.where(
+          (t) => t.paymentId == p.id,
+        )) {
+          if (t.deadline != null) {
+            if (earliest == null || t.deadline!.isBefore(earliest)) {
+              earliest = t.deadline;
+            }
+          }
+        }
+        return earliest;
+      }
+
+      final aDate = earliestFor(a);
+      final bDate = earliestFor(b);
+      if (aDate == null && bDate == null) return 0;
+      if (aDate == null) return 1;
+      if (bDate == null) return -1;
+      return aDate.compareTo(bDate);
+    });
+
     return result;
   }
 }
