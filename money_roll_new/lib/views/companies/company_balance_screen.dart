@@ -24,6 +24,7 @@ class CompanyBalanceScreen extends StatelessWidget {
       appBar: AppBar(
         backgroundColor: AppColors.bg,
         elevation: 0,
+        leading: const AppBackButton(),
         title: Text(
           'Company Balances',
           style: GoogleFonts.spaceGrotesk(
@@ -545,6 +546,7 @@ class CompanyBalanceScreen extends StatelessWidget {
                       ],
                     ),
                   ),
+                  const SheetCloseButton(),
                 ],
               ),
               const SizedBox(height: 20),

@@ -21,6 +21,7 @@ class CashLedgerScreen extends StatelessWidget {
       appBar: AppBar(
         backgroundColor: AppColors.bg,
         elevation: 0,
+        leading: const AppBackButton(),
         title: Text(
           'Cash Ledger',
           style: GoogleFonts.spaceGrotesk(

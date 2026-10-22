@@ -742,13 +742,20 @@ class _PoolCard extends StatelessWidget {
                       ),
                     ),
                     const SizedBox(height: 16),
-                    Text(
-                      'Add Money to Pool ${payment.code}',
-                      style: GoogleFonts.spaceGrotesk(
-                        fontSize: 17,
-                        fontWeight: FontWeight.w600,
-                        color: AppColors.textPrimary,
-                      ),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            'Add Money to Pool ${payment.code}',
+                            style: GoogleFonts.spaceGrotesk(
+                              fontSize: 17,
+                              fontWeight: FontWeight.w600,
+                              color: AppColors.textPrimary,
+                            ),
+                          ),
+                        ),
+                        const SheetCloseButton(),
+                      ],
                     ),
                     const SizedBox(height: 6),
                     Container(
@@ -1770,6 +1777,7 @@ class _TransferNodeState extends State<_TransferNode> {
                           overflow: TextOverflow.ellipsis,
                         ),
                       ),
+                      const SheetCloseButton(),
                     ],
                   ),
                   const SizedBox(height: 20),
@@ -1904,6 +1912,7 @@ class _TransferNodeState extends State<_TransferNode> {
                       transfer.label!,
                       style: const TextStyle(color: AppColors.textSecondary),
                     ),
+                  const SheetCloseButton(),
                 ],
               ),
               const SizedBox(height: 20),
@@ -2233,13 +2242,20 @@ void showAddBranchSheet(
                     ),
                   ),
                   const SizedBox(height: 16),
-                  Text(
-                    'Branch from $fromName',
-                    style: GoogleFonts.spaceGrotesk(
-                      fontSize: 17,
-                      fontWeight: FontWeight.w600,
-                      color: AppColors.textPrimary,
-                    ),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          'Branch from $fromName',
+                          style: GoogleFonts.spaceGrotesk(
+                            fontSize: 17,
+                            fontWeight: FontWeight.w600,
+                            color: AppColors.textPrimary,
+                          ),
+                        ),
+                      ),
+                      const SheetCloseButton(),
+                    ],
                   ),
                   const SizedBox(height: 6),
                   Row(
@@ -2685,13 +2701,20 @@ void showEditBranchSheet(BuildContext context, TransferModel t) {
                   ),
                 ),
                 const SizedBox(height: 16),
-                Text(
-                  'Edit branch ${t.code}',
-                  style: GoogleFonts.spaceGrotesk(
-                    fontSize: 17,
-                    fontWeight: FontWeight.w600,
-                    color: AppColors.textPrimary,
-                  ),
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        'Edit branch ${t.code}',
+                        style: GoogleFonts.spaceGrotesk(
+                          fontSize: 17,
+                          fontWeight: FontWeight.w600,
+                          color: AppColors.textPrimary,
+                        ),
+                      ),
+                    ),
+                    const SheetCloseButton(),
+                  ],
                 ),
                 const SizedBox(height: 16),
                 TextField(
@@ -2900,13 +2923,20 @@ void showClearDebtSheet(BuildContext context, TransferModel t) {
                     ),
                   ),
                   const SizedBox(height: 16),
-                  Text(
-                    'Clear debt ${t.code}',
-                    style: GoogleFonts.spaceGrotesk(
-                      fontSize: 17,
-                      fontWeight: FontWeight.w600,
-                      color: AppColors.textPrimary,
-                    ),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          'Clear debt ${t.code}',
+                          style: GoogleFonts.spaceGrotesk(
+                            fontSize: 17,
+                            fontWeight: FontWeight.w600,
+                            color: AppColors.textPrimary,
+                          ),
+                        ),
+                      ),
+                      const SheetCloseButton(),
+                    ],
                   ),
                   const SizedBox(height: 4),
                   Text(

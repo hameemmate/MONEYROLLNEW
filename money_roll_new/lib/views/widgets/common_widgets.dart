@@ -1,7 +1,53 @@
 import 'package:flutter/material.dart';
+import 'package:get/get.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:money_roll_new/utils/app_constants.dart';
 import 'package:money_roll_new/utils/app_utils.dart';
+
+/// Explicit back control for pushed screens. iOS has no system back key, so
+/// screens must always expose this instead of relying on Android's navbar.
+class AppBackButton extends StatelessWidget {
+  const AppBackButton({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return IconButton(
+      tooltip: 'Back',
+      icon: const Icon(Icons.arrow_back, color: AppColors.textPrimary),
+      onPressed: () {
+        if (Navigator.of(context).canPop()) {
+          Navigator.of(context).pop();
+        } else {
+          Get.back();
+        }
+      },
+    );
+  }
+}
+
+/// Close control for modal bottom sheets. Android can dismiss with the
+/// system back key; iOS cannot, and swipe-to-dismiss often fails when the
+/// keyboard is open or the sheet is scroll-controlled.
+class SheetCloseButton extends StatelessWidget {
+  const SheetCloseButton({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return IconButton(
+      tooltip: 'Close',
+      padding: EdgeInsets.zero,
+      constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+      icon: const Icon(Icons.close, size: 20, color: AppColors.textMuted),
+      onPressed: () {
+        if (Navigator.of(context).canPop()) {
+          Navigator.of(context).pop();
+        } else {
+          Get.back();
+        }
+      },
+    );
+  }
+}
 
 class StatCard extends StatelessWidget {
   final String label;

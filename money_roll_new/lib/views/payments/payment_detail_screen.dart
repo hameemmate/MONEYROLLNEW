@@ -28,6 +28,19 @@ class PaymentDetailScreen extends StatelessWidget {
       if (payment == null) {
         return Scaffold(
           backgroundColor: AppColors.bg,
+          appBar: AppBar(
+            backgroundColor: AppColors.bg,
+            elevation: 0,
+            leading: const AppBackButton(),
+            title: Text(
+              'Payment Details',
+              style: GoogleFonts.spaceGrotesk(
+                fontSize: 18,
+                fontWeight: FontWeight.w600,
+                color: AppColors.textPrimary,
+              ),
+            ),
+          ),
           body: const Center(
             child: Text(
               'Payment not found',
@@ -56,10 +69,7 @@ class PaymentDetailScreen extends StatelessWidget {
               color: AppColors.textPrimary,
             ),
           ),
-          leading: IconButton(
-            icon: const Icon(Icons.arrow_back, color: AppColors.textPrimary),
-            onPressed: () => Get.back(),
-          ),
+          leading: const AppBackButton(),
           actions: [
             IconButton(
               icon: const Icon(
@@ -379,7 +389,7 @@ class PaymentDetailScreen extends StatelessWidget {
         ),
         actions: [
           TextButton(
-            onPressed: () => Get.back(),
+            onPressed: () => Navigator.of(ctx).pop(),
             child: const Text(
               'Cancel',
               style: TextStyle(color: AppColors.textSecondary),
@@ -387,10 +397,22 @@ class PaymentDetailScreen extends StatelessWidget {
           ),
           TextButton(
             onPressed: () async {
-              Get.back(); // close dialog
-              await payCtrl.deletePayment(paymentId);
-              Get.back(); // leave detail screen
-              AppUtils.showSuccess('Deleted', 'Payment removed');
+              final navigator = Navigator.of(context);
+              Navigator.of(ctx).pop();
+              try {
+                await payCtrl.deletePayment(paymentId);
+                if (navigator.canPop()) {
+                  navigator.pop();
+                } else {
+                  Get.back();
+                }
+                AppUtils.showSuccess('Deleted', 'Payment removed');
+              } catch (e) {
+                AppUtils.showError(
+                  'Error',
+                  e.toString().replaceFirst('Exception: ', ''),
+                );
+              }
             },
             child: const Text('Delete', style: TextStyle(color: AppColors.red)),
           ),

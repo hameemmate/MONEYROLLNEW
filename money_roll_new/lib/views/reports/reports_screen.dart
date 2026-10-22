@@ -8,6 +8,7 @@ import '../../models/payment_model.dart';
 import '../../services/pdf_report_service.dart';
 import '../../utils/app_constants.dart';
 import '../../utils/app_utils.dart';
+import '../widgets/common_widgets.dart';
 
 class ReportsScreen extends StatefulWidget {
   const ReportsScreen({super.key});
@@ -51,6 +52,7 @@ class _ReportsScreenState extends State<ReportsScreen> {
       appBar: AppBar(
         backgroundColor: AppColors.bg,
         elevation: 0,
+        leading: const AppBackButton(),
         title: Text(
           'Reports',
           style: GoogleFonts.spaceGrotesk(

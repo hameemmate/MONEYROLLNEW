@@ -79,10 +79,7 @@ class _AddPaymentScreenState extends State<AddPaymentScreen> {
             color: AppColors.textPrimary,
           ),
         ),
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back, color: AppColors.textPrimary),
-          onPressed: () => Get.back(),
-        ),
+        leading: const AppBackButton(),
         elevation: 0,
       ),
       body: SafeArea(

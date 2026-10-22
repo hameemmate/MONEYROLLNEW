@@ -247,15 +247,22 @@ class CompaniesScreen extends StatelessWidget {
                     ),
                   ),
                   const SizedBox(height: 16),
-                  Text(
-                    editing == null
-                        ? 'Add Company / Partner'
-                        : 'Edit ${editing.name}',
-                    style: GoogleFonts.spaceGrotesk(
-                      fontSize: 17,
-                      fontWeight: FontWeight.w600,
-                      color: AppColors.textPrimary,
-                    ),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          editing == null
+                              ? 'Add Company / Partner'
+                              : 'Edit ${editing.name}',
+                          style: GoogleFonts.spaceGrotesk(
+                            fontSize: 17,
+                            fontWeight: FontWeight.w600,
+                            color: AppColors.textPrimary,
+                          ),
+                        ),
+                      ),
+                      const SheetCloseButton(),
+                    ],
                   ),
                   const SizedBox(height: 16),
                   TextField(
